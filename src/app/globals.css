@@ -1,27 +1,80 @@
 @import "tailwindcss";
 
-/* SD Worx brand palette — provisional, values patched after brand research */
+/*
+ * SD Worx brand palette (post June-2026 rebrand: "SD Worx makes work work").
+ * Sources: sdworx.com logo SVG, website CSS bundle, and the SD Worx "Ignite"
+ * design-system tokens (cdn.sdworx.com/ignite/styling/v2). The official
+ * guidelines live behind login at brand.sdworx.com, so treat as best-effort.
+ *
+ * Usage: bg-brand-500 / text-brand-950 (blue scale), bg-accent (red),
+ * bg-sun (yellow), text-ink, text-body, bg-surface-alt, border-line, etc.
+ */
 @theme {
-  --color-brand-50: #fff1f5;
-  --color-brand-100: #ffe0e9;
-  --color-brand-200: #ffc2d3;
-  --color-brand-300: #ff94b3;
-  --color-brand-400: #ff5c8d;
-  --color-brand-500: #ee2d68;
-  --color-brand-600: #d61456;
-  --color-brand-700: #b30c47;
-  --color-brand-800: #920c3f;
-  --color-brand-900: #7c0d3b;
-  --color-brand-950: #450419;
+  /* Primary blue scale — brand-500 is the logo / CTA blue */
+  --color-brand-50: #effaff;
+  --color-brand-100: #d9f1ff;
+  --color-brand-200: #9ed2ff;
+  --color-brand-300: #38a1ff;
+  --color-brand-400: #0087f3;
+  --color-brand-500: #006dd8;
+  --color-brand-600: #005bbf;
+  --color-brand-700: #00459a;
+  --color-brand-800: #002e75;
+  --color-brand-900: #001c52;
+  --color-brand-950: #000d3a;
+  --color-brand: var(--color-brand-500);
+
+  /* Logo companions */
+  --color-accent: #f1002f; /* brand red */
+  --color-accent-soft: #ffe3e3;
+  --color-sun: #ffbe00; /* brand yellow */
+  --color-magenta: #cb2f90; /* Ignite accent-12 / dataviz */
+
+  /* Neutrals (Ignite + website) */
+  --color-ink: #040d14; /* headlines */
+  --color-body: #303642; /* body text */
+  --color-muted: #5a5b5c;
+  --color-slate: #7783a0;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f4f5f8;
+  --color-surface-soft: #f4f5f6;
+  --color-line: #d9dbdd;
+  --color-line-soft: #eaebed;
+
+  /* Semantic (Ignite) */
+  --color-success: #007900;
+  --color-warning: #f3b01d;
+  --color-danger: #e90040;
+  --color-info: #006aff;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  /* SD Worx Display is a licensed font; Inter is their body font and free. */
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: Consolas, ui-monospace, monospace;
+}
+
+/* Brand gradients lifted from sdworx.com */
+@utility bg-brand-gradient {
+  background: linear-gradient(265deg, #38a1ff -2.8%, #006dd8 93.2%);
+}
+@utility bg-brand-gradient-warm {
+  background: linear-gradient(209deg, #006dd8 27.08%, #f1002f 91.62%);
+}
+@utility text-brand-gradient {
+  background: linear-gradient(265deg, #38a1ff -2.8%, #006dd8 93.2%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 body {
-  background: white;
-  color: var(--color-neutral-900);
+  background: var(--color-surface);
+  color: var(--color-body);
   font-family: var(--font-sans);
 }

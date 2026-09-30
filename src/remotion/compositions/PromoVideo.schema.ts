@@ -18,6 +18,6 @@ export const PROMO_VIDEO = {
   durationInFrames: 30 * 8,
   defaultProps: {
     title: "SD Worx",
-    subtitle: "Payroll & HR, made human",
+    subtitle: "SD Worx makes work work",
   } satisfies PromoVideoProps,
 };

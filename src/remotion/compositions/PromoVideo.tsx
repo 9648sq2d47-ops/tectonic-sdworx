@@ -10,38 +10,43 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-
+import { loadFont } from "@remotion/google-fonts/Inter";
 import type { PromoVideoProps } from "./PromoVideo.schema";
+
+const { fontFamily } = loadFont("normal", { weights: ["400", "600"], subsets: ["latin"] });
 
 export const PromoVideo = ({ title, subtitle, voiceOver }: PromoVideoProps) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
-  const titleIn = spring({ frame, fps, config: { damping: 200 } });
-  const subtitleIn = spring({ frame: frame - 15, fps, config: { damping: 200 } });
+  const barIn = spring({ frame, fps, config: { damping: 200 } });
+  const titleIn = spring({ frame: frame - 5, fps, config: { damping: 200 } });
+  const subtitleIn = spring({ frame: frame - 20, fps, config: { damping: 200 } });
   const fadeOut = interpolate(frame, [durationInFrames - 20, durationInFrames], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
   return (
-    <AbsoluteFill className="bg-brand-950 text-white" style={{ opacity: fadeOut }}>
+    <AbsoluteFill className="bg-surface text-ink" style={{ opacity: fadeOut, fontFamily }}>
       {voiceOver ? <Audio src={staticFile(voiceOver)} /> : null}
 
       <AbsoluteFill className="items-center justify-center">
-        <div
-          className="h-3 w-40 rounded-full bg-brand-500"
-          style={{ transform: `scaleX(${titleIn})`, marginBottom: 40 }}
-        />
+        {/* Three-stroke mark echoing the SD Worx logo */}
+        <div className="mb-12 flex gap-3" style={{ transform: `scaleX(${barIn})` }}>
+          <div className="h-3 w-24 rounded-full bg-brand" />
+          <div className="h-3 w-24 rounded-full bg-accent" />
+          <div className="h-3 w-24 rounded-full bg-sun" />
+        </div>
         <h1
-          className="font-sans text-9xl font-bold tracking-tight"
+          className="text-brand-gradient text-9xl font-semibold tracking-tight"
           style={{ opacity: titleIn, transform: `translateY(${(1 - titleIn) * 40}px)` }}
         >
           {title}
         </h1>
-        <Sequence from={15} layout="none">
+        <Sequence from={20} layout="none">
           <p
-            className="mt-8 text-5xl text-brand-100"
+            className="mt-8 text-5xl text-body"
             style={{ opacity: subtitleIn, transform: `translateY(${(1 - subtitleIn) * 30}px)` }}
           >
             {subtitle}
