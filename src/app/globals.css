@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* SD Worx brand palette — provisional, values patched after brand research */
+@theme {
+  --color-brand-50: #fff1f5;
+  --color-brand-100: #ffe0e9;
+  --color-brand-200: #ffc2d3;
+  --color-brand-300: #ff94b3;
+  --color-brand-400: #ff5c8d;
+  --color-brand-500: #ee2d68;
+  --color-brand-600: #d61456;
+  --color-brand-700: #b30c47;
+  --color-brand-800: #920c3f;
+  --color-brand-900: #7c0d3b;
+  --color-brand-950: #450419;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+body {
+  background: white;
+  color: var(--color-neutral-900);
+  font-family: var(--font-sans);
+}
