@@ -1,0 +1,38 @@
+# Aikido Security scan — fails the build on new HIGH/CRITICAL dependency issues.
+#
+# One-time setup (repo admin):
+#   1. Connect this GitHub repo in Aikido: https://app.aikido.dev/settings/integrations
+#   2. Create a CI secret key: https://app.aikido.dev/settings/integrations/continuous-integration
+#   3. Add it as the repository secret AIKIDO_SECRET_KEY (Settings → Secrets → Actions).
+name: Aikido Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["*"]
+
+permissions:
+  contents: read
+  pull-requests: write # lets Aikido post the scan summary on PRs
+
+jobs:
+  aikido-security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect new vulnerabilities
+        uses: AikidoSec/github-actions-workflow@v1.0.13
+        with:
+          secret-key: ${{ secrets.AIKIDO_SECRET_KEY }}
+          minimum-severity: "HIGH"
+          fail-on-timeout: false
+          fail-on-dependency-scan: true
+          fail-on-sast-scan: false # paid-plan feature
+          fail-on-iac-scan: false # paid-plan feature
+          timeout-seconds: 180
+          post-scan-status-comment: "only_if_new_findings"
+          post-sast-review-comments: "off"
+          github-token: ${{ secrets.GITHUB_TOKEN }}

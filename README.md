@@ -1,5 +1,9 @@
 # Tectonic × SD Worx
 
+[![Aikido Security](https://app.aikido.dev/assets/badges/label-only-light-theme.svg)](https://app.aikido.dev)
+[![Aikido scan](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/aikido.yml/badge.svg)](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/aikido.yml)
+[![CI](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/ci.yml/badge.svg)](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/ci.yml)
+
 AI video generator built for SD Worx: a Next.js app that writes a script with an LLM,
 voices it with ElevenLabs, and renders the video with Remotion.
 
@@ -54,3 +58,13 @@ Compositions live in `src/remotion/compositions`. They can use Tailwind classes,
 the `brand-*` palette, thanks to `@remotion/tailwind-v4`. Register new compositions in
 `src/remotion/Root.tsx`. The `PromoVideo` composition takes a `voiceOver` path and plays it
 with Remotion's `<Audio>`.
+
+## Security
+
+Security is part of the grade, so it is part of the workflow. Aikido scans every push and PR
+and blocks on HIGH+ findings, CI runs `npm audit`, Dependabot keeps dependencies fresh, and
+all provider keys stay server-side in `.env.local`. Details and rules in [SECURITY.md](SECURITY.md).
+
+To activate Aikido on a fresh fork: connect the repo at app.aikido.dev, create a CI secret
+key under Integrations → Continuous Integration, and store it as the `AIKIDO_SECRET_KEY`
+repository secret.
