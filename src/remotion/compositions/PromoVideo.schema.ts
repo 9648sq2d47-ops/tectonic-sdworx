@@ -2,8 +2,8 @@ import { z } from "zod";
 
 // Kept free of Remotion imports so server code (API routes) can import it.
 export const promoVideoSchema = z.object({
-  title: z.string(),
-  subtitle: z.string(),
+  title: z.string().trim().min(1).max(72),
+  subtitle: z.string().trim().min(1).max(140),
   /** Path under /public, e.g. "audio/abc123.mp3" (from ElevenLabs). Optional. */
   voiceOver: z.string().optional(),
 });

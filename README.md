@@ -59,6 +59,18 @@ the `brand-*` palette, thanks to `@remotion/tailwind-v4`. Register new compositi
 `src/remotion/Root.tsx`. The `PromoVideo` composition takes a `voiceOver` path and plays it
 with Remotion's `<Audio>`.
 
+### Master render quality
+
+CLI renders and the server-side `/api/render` path use the same master settings:
+
+- H.264 at CRF 14;
+- PNG source frames, `yuv420p`, BT.709;
+- AAC at 320 Kbit/s and 48 kHz, with an audio track enforced;
+- bounded title/subtitle input plus composition safe areas.
+
+CI must render the complete 1920×1080 `PromoVideo` and produce a non-empty MP4 before the
+video path is considered build-valid.
+
 ## Security
 
 Security is part of the grade, so it is part of the workflow. Aikido scans every push and PR

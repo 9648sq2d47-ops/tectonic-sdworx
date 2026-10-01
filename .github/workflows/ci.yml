@@ -23,3 +23,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+      - name: Render PromoVideo quality master
+        run: |
+          npm run remotion:render
+          test -s out/PromoVideo.mp4

@@ -6,6 +6,18 @@ import { enableTailwind } from "@remotion/tailwind-v4";
 
 let bundlePromise: Promise<string> | undefined;
 
+const MASTER_RENDER_SETTINGS = {
+  codec: "h264" as const,
+  crf: 14,
+  imageFormat: "png" as const,
+  pixelFormat: "yuv420p" as const,
+  audioCodec: "aac" as const,
+  audioBitrate: "320K",
+  enforceAudioTrack: true,
+  colorSpace: "bt709" as const,
+  sampleRate: 48_000 as const,
+};
+
 /** Bundles the Remotion project once per server process. */
 function getBundle() {
   bundlePromise ??= bundle({
@@ -32,9 +44,10 @@ export async function renderVideo({ compositionId, inputProps, fileName }: Rende
   await renderMedia({
     composition,
     serveUrl,
-    codec: "h264",
     inputProps,
     outputLocation,
+    overwrite: true,
+    ...MASTER_RENDER_SETTINGS,
   });
 
   return outputLocation;
