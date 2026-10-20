@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { CLAIMS, CLIENTS, DOCUMENTS, PEOPLE } from "./fixtures/demo-workspace";
-import { findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, resetStore, setReview, getReview } from "./store";
+import { extractClaimsFromTranscript, resolveSpeakerId } from "./extract-claims";
+import { addHandover, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, resetStore, setReview, getReview } from "./store";
 
 describe("store is workspace-scoped", () => {
   beforeEach(() => resetStore());
@@ -38,6 +39,53 @@ describe("store is workspace-scoped", () => {
       if (d.supersedes) expect(DOCUMENTS.find((x) => x.id === d.supersedes)?.clientId, d.id).toBe(d.clientId);
     }
     expect(new Set([...CLAIMS.map((c) => c.id), ...DOCUMENTS.map((d) => d.id)]).size).toBe(CLAIMS.length + DOCUMENTS.length);
+  });
+
+  it("accepts only scoped live handovers with verbatim quotes", () => {
+    addHandover({
+      document: {
+        id: "doc-live-test",
+        workspaceId: "ws-demo",
+        clientId: "cl-janssens",
+        kind: "transcript",
+        title: "Live handover",
+        content: "Nadia: Meal vouchers are eight euro.",
+        updatedAt: "2026-10-20",
+        topics: ["meal-vouchers"],
+      },
+      claims: [{
+        id: "claim-live-test",
+        workspaceId: "ws-demo",
+        clientId: "cl-janssens",
+        text: "Meal vouchers are eight euro.",
+        saidAt: "2026-10-20",
+        sourceDocumentId: "doc-live-test",
+        quote: "Meal vouchers are eight euro.",
+        topics: ["meal-vouchers"],
+        anchors: [],
+      }],
+    });
+
+    expect(getDocument("ws-demo", "doc-live-test")?.kind).toBe("transcript");
+    expect(getClaim("ws-demo", "claim-live-test")?.quote).toBe("Meal vouchers are eight euro.");
+    expect(getClaim("ws-other", "claim-live-test")).toBeUndefined();
+  });
+
+  it("fails closed when extraction invents a quote", async () => {
+    const transcript = "Nadia: Meal vouchers are seven euro face value, one per day worked.";
+    await expect(extractClaimsFromTranscript(transcript, async () => JSON.stringify({
+      claims: [{
+        text: "Meal vouchers are eight euro.",
+        quote: "Meal vouchers are eight euro.",
+        topics: ["meal-vouchers"],
+        speakerName: "Nadia",
+      }],
+    }))).rejects.toThrow("not verbatim");
+  });
+
+  it("maps an explicit speaker without inventing a person", () => {
+    expect(resolveSpeakerId("Nadia", PEOPLE)).toBe("p-nadia");
+    expect(resolveSpeakerId("Unknown", PEOPLE)).toBeUndefined();
   });
 
   it("keys reviews by workspace and claim", () => {
