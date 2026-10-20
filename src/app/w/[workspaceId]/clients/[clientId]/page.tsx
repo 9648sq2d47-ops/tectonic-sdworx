@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { requireWorkspaceMember, requireWorkspacePage } from "@/lib/auth/access";
 import { generateText } from "@/lib/ai/openai";
 import { env } from "@/lib/env";
+import { rateLimit } from "@/lib/rate-limit";
 import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
@@ -22,7 +23,9 @@ async function captureHandover(formData: FormData) {
   const clientId = String(formData.get("clientId") ?? "");
   const transcript = String(formData.get("transcript") ?? "").trim();
 
-  await requireWorkspaceMember(workspaceId);
+  const { user } = await requireWorkspaceMember(workspaceId);
+  const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
+  if (!limit.ok) throw new Error("Too many handover extraction attempts");
   if (!getClient(workspaceId, clientId)) throw new Error("Client not found");
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
   if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
