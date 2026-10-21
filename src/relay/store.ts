@@ -102,6 +102,30 @@ export function getClaim(workspaceId: string, claimId: string): Claim | undefine
   return store().claims.find((c) => c.workspaceId === workspaceId && c.id === claimId);
 }
 
+export function addHandover(input: { document: KnowledgeDocument; claims: Claim[] }): void {
+  const { document, claims } = input;
+  const s = store();
+  if (!document.clientId) throw new Error("Handover transcript must belong to a client");
+  if (!s.clients.some((x) => x.workspaceId === document.workspaceId && x.id === document.clientId)) {
+    throw new Error("Client not found");
+  }
+  if (claims.length === 0 || claims.length > 5) throw new Error("Handover must contain 1 to 5 claims");
+  if (s.documents.some((d) => d.id === document.id) || claims.some((claim) => s.claims.some((x) => x.id === claim.id))) {
+    throw new Error("Handover id already exists");
+  }
+  for (const claim of claims) {
+    if (claim.workspaceId !== document.workspaceId || claim.clientId !== document.clientId) {
+      throw new Error("Claim scope does not match transcript");
+    }
+    if (claim.sourceDocumentId !== document.id) throw new Error("Claim source does not match transcript");
+    if (!claim.quote || !document.content.includes(claim.quote)) {
+      throw new Error("Claim quote is not verbatim in transcript");
+    }
+  }
+  s.documents.push(document);
+  s.claims.push(...claims);
+}
+
 export function getReview(workspaceId: string, claimId: string): ClaimReview | undefined {
   return store().reviews.get(`${workspaceId}/${claimId}`);
 }

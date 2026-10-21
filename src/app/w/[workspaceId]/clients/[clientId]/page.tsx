@@ -1,14 +1,68 @@
+import { randomUUID } from "node:crypto";
 import Link from "next/link";
+import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
-import { requireWorkspacePage } from "@/lib/auth/access";
+import { requireWorkspaceMember, requireWorkspacePage } from "@/lib/auth/access";
+import { generateText } from "@/lib/ai/openai";
+import { env } from "@/lib/env";
+import { rateLimit } from "@/lib/rate-limit";
 import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
-import { assessClientCached, llmMode } from "@/relay/assess-cached";
-import { getClient, getReview, listDocuments, listPeople } from "@/relay/store";
+import { assessClientCached, invalidateAssessmentCache, llmMode } from "@/relay/assess-cached";
+import { extractClaimsFromTranscript, resolveSpeakerId } from "@/relay/extract-claims";
+import { addHandover, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
+import type { Claim, KnowledgeDocument } from "@/relay/types";
 import { VERDICTS } from "@/relay/types";
 
 export const dynamic = "force-dynamic";
+
+async function captureHandover(formData: FormData) {
+  "use server";
+  const workspaceId = String(formData.get("workspaceId") ?? "");
+  const clientId = String(formData.get("clientId") ?? "");
+  const transcript = String(formData.get("transcript") ?? "").trim();
+
+  const { user } = await requireWorkspaceMember(workspaceId);
+  const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
+  if (!limit.ok) throw new Error("Too many handover extraction attempts");
+  if (!getClient(workspaceId, clientId)) throw new Error("Client not found");
+  if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
+  if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
+
+  const drafts = await extractClaimsFromTranscript(transcript, generateText);
+  const people = listPeople(workspaceId);
+  const saidAt = new Date().toISOString().slice(0, 10);
+  const documentId = `doc-live-${randomUUID()}`;
+
+  const claims: Claim[] = drafts.map((draft) => ({
+    id: `claim-live-${randomUUID()}`,
+    workspaceId,
+    clientId,
+    text: draft.text,
+    speakerId: resolveSpeakerId(draft.speakerName, people),
+    saidAt,
+    sourceDocumentId: documentId,
+    quote: draft.quote,
+    topics: draft.topics,
+    anchors: [],
+  }));
+
+  const document: KnowledgeDocument = {
+    id: documentId,
+    workspaceId,
+    clientId,
+    kind: "transcript",
+    title: `Live handover ${saidAt}`,
+    content: transcript,
+    updatedAt: saidAt,
+    topics: [...new Set(drafts.flatMap((draft) => draft.topics))],
+  };
+
+  addHandover({ document, claims });
+  invalidateAssessmentCache(workspaceId, clientId);
+  revalidatePath(`/w/${workspaceId}/clients/${clientId}`);
+}
 
 export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspaceId]/clients/[clientId]">) {
   const { workspaceId, clientId } = await params;
@@ -43,6 +97,32 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
           Verified client brief
         </Link>
       </div>
+
+      <section className="rounded-lg border border-line bg-surface p-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Live handover</p>
+        <h2 className="mt-1 text-lg font-semibold text-ink">Turn a handover into bounded claims</h2>
+        <p className="mt-1 text-sm text-body">
+          OpenAI extracts explicit statements only. Every created claim must retain an exact source quote before Relay verifies it.
+        </p>
+        <form action={captureHandover} className="mt-4 flex flex-col gap-3">
+          <input type="hidden" name="workspaceId" value={workspaceId} />
+          <input type="hidden" name="clientId" value={clientId} />
+          <textarea
+            name="transcript"
+            minLength={40}
+            maxLength={8000}
+            rows={6}
+            required
+            placeholder={"Nadia: Meal vouchers are seven euro face value, one per day worked.\nNadia: Sunday work gets a fifty percent premium."}
+            className="w-full rounded-md border border-line bg-surface p-3 text-sm text-ink outline-none focus:border-brand"
+          />
+          <div>
+            <button type="submit" className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-400">
+              Extract claims with OpenAI
+            </button>
+          </div>
+        </form>
+      </section>
 
       <dl className="grid grid-cols-3 gap-3 sm:grid-cols-6">
         {(

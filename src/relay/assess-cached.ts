@@ -18,6 +18,10 @@ export function assessClientCached(workspaceId: string, clientId: string): Promi
   return value;
 }
 
+export function invalidateAssessmentCache(workspaceId: string, clientId: string): void {
+  cache.delete(`${workspaceId}/${clientId}`);
+}
+
 export function llmMode(): "live" | "offline" {
   return llmAvailable() ? "live" : "offline";
 }
