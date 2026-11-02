@@ -10,7 +10,7 @@ import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
 import { assessClientCached, invalidateAssessmentCache, llmMode } from "@/relay/assess-cached";
-import { extractClaimsFromTranscript, resolveSpeakerId } from "@/relay/extract-claims";
+import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveSpeakerId } from "@/relay/extract-claims";
 import { addHandover, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
 import type { Claim, KnowledgeDocument } from "@/relay/types";
 import { VERDICTS } from "@/relay/types";
@@ -26,7 +26,8 @@ async function captureHandover(formData: FormData) {
   const { user } = await requireWorkspaceMember(workspaceId);
   const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
   if (!limit.ok) throw new Error("Too many handover extraction attempts");
-  if (!getClient(workspaceId, clientId)) throw new Error("Client not found");
+  const client = getClient(workspaceId, clientId);
+  if (!client) throw new Error("Client not found");
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
   if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
 
@@ -45,7 +46,7 @@ async function captureHandover(formData: FormData) {
     sourceDocumentId: documentId,
     quote: draft.quote,
     topics: draft.topics,
-    anchors: [],
+    anchors: legalAnchorsForClaim(draft, client.jurisdiction),
   }));
 
   const document: KnowledgeDocument = {

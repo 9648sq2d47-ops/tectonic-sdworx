@@ -13,6 +13,7 @@ import type {
   Workspace,
 } from "./types";
 import * as demo from "./fixtures/demo-workspace";
+import { legalAnchorsForClaim } from "./extract-claims";
 
 interface Store {
   workspaces: Workspace[];
@@ -106,9 +107,8 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
   const { document, claims } = input;
   const s = store();
   if (!document.clientId) throw new Error("Handover transcript must belong to a client");
-  if (!s.clients.some((x) => x.workspaceId === document.workspaceId && x.id === document.clientId)) {
-    throw new Error("Client not found");
-  }
+  const client = s.clients.find((x) => x.workspaceId === document.workspaceId && x.id === document.clientId);
+  if (!client) throw new Error("Client not found");
   if (claims.length === 0 || claims.length > 5) throw new Error("Handover must contain 1 to 5 claims");
   if (s.documents.some((d) => d.id === document.id) || claims.some((claim) => s.claims.some((x) => x.id === claim.id))) {
     throw new Error("Handover id already exists");
@@ -120,6 +120,17 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
     if (claim.sourceDocumentId !== document.id) throw new Error("Claim source does not match transcript");
     if (!claim.quote || !document.content.includes(claim.quote)) {
       throw new Error("Claim quote is not verbatim in transcript");
+    }
+    if (claim.text !== claim.quote || claim.text.length < 5 || claim.text.length > 240 || claim.text.trim() !== claim.text) {
+      throw new Error("Claim text must equal its verbatim source quote (5 to 240 characters)");
+    }
+    const expected = legalAnchorsForClaim(claim, client.jurisdiction);
+    if (!Array.isArray(claim.anchors) || claim.anchors.length !== expected.length || expected.some((anchor) =>
+      !claim.anchors.some((actual) => actual.topic === anchor.topic && actual.reference === undefined &&
+        actual.jurisdiction?.country === anchor.jurisdiction.country &&
+        actual.jurisdiction?.region === anchor.jurisdiction.region &&
+        actual.jurisdiction?.jointCommittee === anchor.jurisdiction.jointCommittee))) {
+      throw new Error("Legal anchors do not match the validated client context");
     }
   }
   s.documents.push(document);
