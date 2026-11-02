@@ -1,12 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLAIMS, CLIENTS, DOCUMENTS, PEOPLE } from "./fixtures/demo-workspace";
-import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveSpeakerId } from "./extract-claims";
+import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveQuotedSpeaker, resolveSpeakerId } from "./extract-claims";
 import { regulationWatch } from "./signals/regulation-watch";
 import { createContext } from "./testing";
 import type { Jurisdiction } from "./types";
-import { addHandover, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, listDocuments, resetStore, setReview, getReview } from "./store";
+import { addHandover, captureHandoverOnce, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, listDocuments, resetStore, setReview, getReview } from "./store";
 
 const clientJurisdiction = CLIENTS.find((client) => client.id === "cl-janssens")!.jurisdiction;
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Network disabled in handover regression tests"); }));
+});
+afterEach(() => {
+  expect(fetch).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
 
 function liveHandover(text = "The client prefers a phone call before noon.", topics = ["contact"]): Parameters<typeof addHandover>[0] {
   return {
@@ -244,5 +252,205 @@ describe("store is workspace-scoped", () => {
     setReview({ workspaceId: "ws-demo", claimId: "c1", status: "accepted", updatedBy: "u-incoming" });
     expect(getReview("ws-demo", "c1")?.status).toBe("accepted");
     expect(getReview("ws-other", "c1")).toBeUndefined();
+  });
+});
+
+describe("quoted-turn speaker binding", () => {
+  beforeEach(() => resetStore());
+  const quote = "The client prefers a phone call before noon.";
+  const reply = (speakerName?: string) => JSON.stringify({
+    claims: [{ text: quote, quote, topics: ["contact"], speakerName }],
+  });
+
+  it("derives the speaker when the model omits it", async () => {
+    const drafts = await extractClaimsFromTranscript(`Nadia: ${quote}`, async () => reply(), PEOPLE);
+    expect(drafts[0].speakerName).toBe("Nadia");
+    const input = liveHandover();
+    addHandover(input);
+    expect(getClaim("ws-demo", input.claims[0].id)?.speakerId).toBe("p-nadia");
+  });
+
+  it("rejects a wrong known model speaker even when that speaker appears elsewhere", async () => {
+    const transcript = `Els: I will check the file tomorrow.\nNadia: ${quote}`;
+    await expect(extractClaimsFromTranscript(transcript, async () => reply("Els"), PEOPLE)).rejects.toThrow("conflicts");
+  });
+
+  it("accepts a full-name alias only when it resolves to the same source speaker", async () => {
+    const drafts = await extractClaimsFromTranscript(`Nadia: ${quote}`, async () => reply("Nadia Haddad"), PEOPLE);
+    expect(drafts[0].speakerName).toBe("Nadia");
+  });
+
+  it.each(["Unknown", "Karim"])("rejects an unsupported model assignment: %s", async (name) => {
+    await expect(extractClaimsFromTranscript(`Nadia: ${quote}`, async () => reply(name), PEOPLE)).rejects.toThrow("conflicts");
+  });
+
+  it("keeps an unknown source label without inventing a registered person", async () => {
+    const drafts = await extractClaimsFromTranscript(`Visitor: ${quote}`, async () => reply("Visitor"), PEOPLE);
+    expect(drafts[0].speakerName).toBe("Visitor");
+    expect(resolveQuotedSpeaker(`Visitor: ${quote}`, quote, PEOPLE).id).toBeUndefined();
+  });
+
+  it("keeps unlabeled text unassigned and rejects a model-invented speaker", async () => {
+    expect((await extractClaimsFromTranscript(quote, async () => reply(), PEOPLE))[0].speakerName).toBeUndefined();
+    await expect(extractClaimsFromTranscript(quote, async () => reply("Nadia"), PEOPLE)).rejects.toThrow("conflicts");
+  });
+
+  it.each(["Els", "Visitor"])("rejects the same quotation attributed to Nadia and %s", async (other) => {
+    await expect(extractClaimsFromTranscript(`Nadia: ${quote}\n${other}: ${quote}`, async () => reply("Nadia"), PEOPLE))
+      .rejects.toThrow("Ambiguous quote speaker");
+  });
+
+  it("rejects a quote occurring both before the labels and in a labeled turn", () => {
+    expect(() => resolveQuotedSpeaker(`${quote}\nNadia: ${quote}`, quote, PEOPLE)).toThrow("Ambiguous quote speaker");
+  });
+
+  it("allows repeated quotes from the same uniquely resolved speaker", () => {
+    expect(resolveQuotedSpeaker(`Nadia: ${quote}\nNadia Haddad: ${quote}`, quote, PEOPLE).id).toBe("p-nadia");
+  });
+
+  it.each(["Nadia Haddad", "Nadia Other", "Nadia"])("rejects ambiguous person records: %s", (name) => {
+    const people = [...PEOPLE, { ...PEOPLE[0], id: "p-second-nadia", name }];
+    const label = name === "Nadia Haddad" ? "Nadia Haddad" : "Nadia";
+    expect(() => resolveQuotedSpeaker(`${label}: ${quote}`, quote, people)).toThrow("Ambiguous speaker name");
+  });
+
+  it("binds a multiline continuation to the preceding speaker label", () => {
+    expect(resolveQuotedSpeaker(`Nadia: A handover note follows.\r\n${quote}\r\nEls: Thank you.`, quote, PEOPLE).id).toBe("p-nadia");
+  });
+
+  it("rejects a quote spanning two turns or including a speaker label", () => {
+    expect(() => resolveQuotedSpeaker(`Nadia: ${quote}\nEls: Thank you.`, `${quote}\nEls: Thank you.`, PEOPLE)).toThrow("speaker turn");
+    expect(() => resolveQuotedSpeaker(`Nadia: ${quote}`, `Nadia: ${quote}`, PEOPLE)).toThrow("speaker label");
+  });
+
+  it.each(["p-els", "invented-person"])("rejects a supplied wrong speaker at the storage boundary: %s", (speakerId) => {
+    const input = liveHandover();
+    input.claims[0].speakerId = speakerId;
+    expect(() => addHandover(input)).toThrow("speaker conflicts");
+    expect(getDocument("ws-demo", input.document.id)).toBeUndefined();
+    expect(getClaim("ws-demo", input.claims[0].id)).toBeUndefined();
+  });
+
+  it("does not resolve a person from another workspace", () => {
+    const input = liveHandover();
+    // Initialize only this test's in-memory store, leaving the fixture unchanged.
+    listClaims("ws-demo", "cl-janssens");
+    globalThis.__relayStore!.people.push({ ...PEOPLE[0], id: "p-foreign", workspaceId: "ws-other" });
+    input.claims[0].speakerId = "p-foreign";
+    expect(() => addHandover(input)).toThrow("speaker conflicts");
+    expect(getDocument("ws-demo", input.document.id)).toBeUndefined();
+  });
+});
+
+describe("process-local exact handover retries", () => {
+  beforeEach(() => resetStore());
+  const quote = "The client prefers a phone call before noon.";
+  const input = { workspaceId: "ws-demo", clientId: "cl-janssens", transcript: `Nadia: ${quote}` };
+  const reply = JSON.stringify({ claims: [{ text: quote, quote, topics: ["contact"], speakerName: "Nadia" }] });
+
+  it("handles sequential replay without another model call or stored record", async () => {
+    const generate = vi.fn(async () => reply);
+    const before = listClaims("ws-demo", "cl-janssens").length;
+    await captureHandoverOnce(input, generate);
+    await captureHandoverOnce(input, generate);
+    await captureHandoverOnce({ ...input, transcript: `  ${input.transcript}\n` }, generate);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before + 1);
+    expect(listDocuments("ws-demo", "cl-janssens").filter((d) => d.content === input.transcript)).toHaveLength(1);
+  });
+
+  it("coalesces concurrent requests before calling the mocked model", async () => {
+    let finish!: (value: string) => void;
+    const generate = vi.fn(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const before = listClaims("ws-demo", "cl-janssens").length;
+    const first = captureHandoverOnce(input, generate);
+    const second = captureHandoverOnce(input, generate);
+    await Promise.resolve();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before);
+    finish(reply);
+    await Promise.all([first, second]);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before + 1);
+  });
+
+  it("sets the reservation before the generator itself can trigger a retry", async () => {
+    let nested!: Promise<void>;
+    const generate = vi.fn(async () => {
+      nested = captureHandoverOnce(input, generate);
+      return reply;
+    });
+    await captureHandoverOnce(input, generate);
+    await nested;
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["model rejection", "invalid JSON", "speaker conflict"])("releases a failed reservation for a clean retry: %s", async (failure) => {
+    const generate = vi.fn(async () => {
+      if (failure === "model rejection") throw new Error("Synthetic model failure");
+      if (failure === "invalid JSON") return "invalid";
+      return reply.replace('"Nadia"', '"Els"');
+    });
+    const before = listClaims("ws-demo", "cl-janssens").length;
+    const results = await Promise.allSettled([captureHandoverOnce(input, generate), captureHandoverOnce(input, generate)]);
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before);
+    expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === input.transcript)).toBe(false);
+    generate.mockResolvedValue(reply);
+    await captureHandoverOnce(input, generate);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before + 1);
+  });
+
+  it("does not deduplicate different clients", async () => {
+    const generate = vi.fn(async () => reply);
+    await Promise.all([captureHandoverOnce(input, generate), captureHandoverOnce({ ...input, clientId: "cl-willems" }, generate)]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const clientId of ["cl-janssens", "cl-willems"]) {
+      expect(listDocuments("ws-demo", clientId).filter((d) => d.content === input.transcript)).toHaveLength(1);
+    }
+  });
+
+  it("does not deduplicate different workspaces", async () => {
+    listClients("ws-demo");
+    globalThis.__relayStore!.clients.push({ ...CLIENTS[0], workspaceId: "ws-other" });
+    const generate = vi.fn(async () => reply);
+    await Promise.all([captureHandoverOnce(input, generate), captureHandoverOnce({ ...input, workspaceId: "ws-other" }, generate)]);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(listDocuments("ws-other", input.clientId)).toHaveLength(1);
+  });
+
+  it("keeps distinct transcripts separate", async () => {
+    const generate = vi.fn(async () => reply);
+    await captureHandoverOnce(input, generate);
+    await captureHandoverOnce({ ...input, transcript: `${input.transcript}\nEls: Thank you.` }, generate);
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { workspaceId: "ws-other" }, { clientId: "missing-client" }, { transcript: "too short" },
+  ])("rejects invalid input before any model call: %j", async (change) => {
+    const generate = vi.fn(async () => reply);
+    await expect(async () => captureHandoverOnce({ ...input, ...change }, generate)).rejects.toThrow();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("also rejects a direct storage replay with fresh IDs", () => {
+    const first = liveHandover();
+    addHandover(first);
+    const second = liveHandover();
+    second.document.id = "doc-replay";
+    second.claims[0].id = "claim-replay";
+    second.claims[0].sourceDocumentId = second.document.id;
+    expect(() => addHandover(second)).toThrow("transcript already exists");
+    expect(getDocument("ws-demo", second.document.id)).toBeUndefined();
+  });
+
+  it("loses retry state on an explicit store reset, matching process-local scope", async () => {
+    const generate = vi.fn(async () => reply);
+    await captureHandoverOnce(input, generate);
+    resetStore();
+    await captureHandoverOnce(input, generate);
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 });

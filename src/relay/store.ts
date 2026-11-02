@@ -2,6 +2,7 @@
  * In-memory store seeded from the demo fixtures. Every read is workspace-scoped:
  * callers never fetch a record by id alone.
  */
+import { createHash, randomUUID } from "node:crypto";
 import type {
   Claim,
   ClaimReview,
@@ -13,7 +14,7 @@ import type {
   Workspace,
 } from "./types";
 import * as demo from "./fixtures/demo-workspace";
-import { legalAnchorsForClaim } from "./extract-claims";
+import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveQuotedSpeaker, type TextGenerator } from "./extract-claims";
 
 interface Store {
   workspaces: Workspace[];
@@ -23,6 +24,7 @@ interface Store {
   documents: KnowledgeDocument[];
   claims: Claim[];
   reviews: Map<string, ClaimReview>; // key: `${workspaceId}/${claimId}`
+  handoversInFlight?: Map<string, Promise<void>>;
 }
 
 declare global {
@@ -103,6 +105,50 @@ export function getClaim(workspaceId: string, claimId: string): Claim | undefine
   return store().claims.find((c) => c.workspaceId === workspaceId && c.id === claimId);
 }
 
+/** Coalesce exact retries before generation, within this server process only. */
+export function captureHandoverOnce(
+  input: { workspaceId: string; clientId: string; transcript: string },
+  generateText: TextGenerator,
+): Promise<void> {
+  const { workspaceId, clientId } = input;
+  const transcript = input.transcript.trim();
+  const client = getClient(workspaceId, clientId);
+  if (!client) throw new Error("Client not found");
+  if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
+  const s = store();
+  if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === workspaceId &&
+    d.clientId === clientId && d.content.trim() === transcript)) return Promise.resolve();
+
+  const key = createHash("sha256").update(JSON.stringify([workspaceId, clientId, transcript])).digest("hex");
+  const pending = s.handoversInFlight ??= new Map();
+  const existing = pending.get(key);
+  if (existing) return existing;
+  // Queue the work so the reservation is set synchronously before any model call.
+  const operation = Promise.resolve().then(async () => {
+    const people = listPeople(workspaceId);
+    const drafts = await extractClaimsFromTranscript(transcript, generateText, people);
+    const saidAt = new Date().toISOString().slice(0, 10);
+    const documentId = `doc-live-${randomUUID()}`;
+    const claims: Claim[] = drafts.map((draft) => ({
+      id: `claim-live-${randomUUID()}`, workspaceId, clientId,
+      text: draft.text, quote: draft.quote,
+      speakerId: resolveQuotedSpeaker(transcript, draft.quote, people, draft.speakerName).id,
+      saidAt, sourceDocumentId: documentId, topics: draft.topics,
+      anchors: legalAnchorsForClaim(draft, client.jurisdiction),
+    }));
+    addHandover({
+      document: {
+        id: documentId, workspaceId, clientId, kind: "transcript",
+        title: `Live handover ${saidAt}`, content: transcript, updatedAt: saidAt,
+        topics: [...new Set(drafts.flatMap((draft) => draft.topics))],
+      },
+      claims,
+    });
+  }).finally(() => pending.delete(key));
+  pending.set(key, operation);
+  return operation;
+}
+
 export function addHandover(input: { document: KnowledgeDocument; claims: Claim[] }): void {
   const { document, claims } = input;
   const s = store();
@@ -113,6 +159,12 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
   if (s.documents.some((d) => d.id === document.id) || claims.some((claim) => s.claims.some((x) => x.id === claim.id))) {
     throw new Error("Handover id already exists");
   }
+  if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === document.workspaceId &&
+    d.clientId === document.clientId && d.content.trim() === document.content.trim())) {
+    throw new Error("Handover transcript already exists");
+  }
+  const people = listPeople(document.workspaceId);
+  const validatedClaims: Claim[] = [];
   for (const claim of claims) {
     if (claim.workspaceId !== document.workspaceId || claim.clientId !== document.clientId) {
       throw new Error("Claim scope does not match transcript");
@@ -124,6 +176,10 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
     if (claim.text !== claim.quote || claim.text.length < 5 || claim.text.length > 240 || claim.text.trim() !== claim.text) {
       throw new Error("Claim text must equal its verbatim source quote (5 to 240 characters)");
     }
+    const speakerId = resolveQuotedSpeaker(document.content, claim.quote, people).id;
+    if (claim.speakerId !== undefined && claim.speakerId !== speakerId) {
+      throw new Error("Claim speaker conflicts with the quoted transcript turn");
+    }
     const expected = legalAnchorsForClaim(claim, client.jurisdiction);
     if (!Array.isArray(claim.anchors) || claim.anchors.length !== expected.length || expected.some((anchor) =>
       !claim.anchors.some((actual) => actual.topic === anchor.topic && actual.reference === undefined &&
@@ -132,9 +188,10 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
         actual.jurisdiction?.jointCommittee === anchor.jurisdiction.jointCommittee))) {
       throw new Error("Legal anchors do not match the validated client context");
     }
+    validatedClaims.push({ ...claim, speakerId });
   }
   s.documents.push(document);
-  s.claims.push(...claims);
+  s.claims.push(...validatedClaims);
 }
 
 export function getReview(workspaceId: string, claimId: string): ClaimReview | undefined {

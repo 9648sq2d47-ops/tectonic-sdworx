@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
@@ -10,9 +9,7 @@ import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
 import { assessClientCached, invalidateAssessmentCache, llmMode } from "@/relay/assess-cached";
-import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveSpeakerId } from "@/relay/extract-claims";
-import { addHandover, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
-import type { Claim, KnowledgeDocument } from "@/relay/types";
+import { captureHandoverOnce, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
 import { VERDICTS } from "@/relay/types";
 
 export const dynamic = "force-dynamic";
@@ -31,36 +28,7 @@ async function captureHandover(formData: FormData) {
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
   if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
 
-  const drafts = await extractClaimsFromTranscript(transcript, generateText);
-  const people = listPeople(workspaceId);
-  const saidAt = new Date().toISOString().slice(0, 10);
-  const documentId = `doc-live-${randomUUID()}`;
-
-  const claims: Claim[] = drafts.map((draft) => ({
-    id: `claim-live-${randomUUID()}`,
-    workspaceId,
-    clientId,
-    text: draft.text,
-    speakerId: resolveSpeakerId(draft.speakerName, people),
-    saidAt,
-    sourceDocumentId: documentId,
-    quote: draft.quote,
-    topics: draft.topics,
-    anchors: legalAnchorsForClaim(draft, client.jurisdiction),
-  }));
-
-  const document: KnowledgeDocument = {
-    id: documentId,
-    workspaceId,
-    clientId,
-    kind: "transcript",
-    title: `Live handover ${saidAt}`,
-    content: transcript,
-    updatedAt: saidAt,
-    topics: [...new Set(drafts.flatMap((draft) => draft.topics))],
-  };
-
-  addHandover({ document, claims });
+  await captureHandoverOnce({ workspaceId, clientId, transcript }, generateText);
   invalidateAssessmentCache(workspaceId, clientId);
   revalidatePath(`/w/${workspaceId}/clients/${clientId}`);
 }

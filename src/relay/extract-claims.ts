@@ -24,6 +24,7 @@ const SYSTEM = [
   "Each quote must be an exact contiguous substring of the transcript.",
   "Set text and quote to the same complete, verbatim statement of 5 to 240 characters.",
   "Preserve negations and conditions; never paraphrase or shorten the statement's meaning.",
+  "Use the speaker label of the turn containing the quote; omit speakerName for unlabeled text.",
   "Use lowercase kebab-case topics.",
   `Use these existing legal topics where applicable: ${[...new Set(REGULATION_FEED.map((notice) => notice.topic))].join(", ")}.`,
   "Return JSON only: {claims:[{text,quote,topics,speakerName?}]}."
@@ -32,6 +33,7 @@ const SYSTEM = [
 export async function extractClaimsFromTranscript(
   transcript: string,
   generateText: TextGenerator,
+  people: readonly Person[] = [],
 ): Promise<ExtractedClaim[]> {
   const source = transcript.trim();
   if (source.length < 40 || source.length > 8000) {
@@ -53,10 +55,11 @@ export async function extractClaimsFromTranscript(
     if (claim.text !== claim.quote) {
       throw new Error("Claim text must equal its verbatim source quote");
     }
+    const speaker = resolveQuotedSpeaker(source, claim.quote, people, claim.speakerName);
     const key = claim.text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    claims.push({ ...claim, topics: [...new Set(claim.topics)] });
+    claims.push({ ...claim, speakerName: speaker.name, topics: [...new Set(claim.topics)] });
   }
 
   if (!claims.length) throw new Error("OpenAI returned no usable claims");
@@ -103,8 +106,47 @@ export function legalAnchorsForClaim(
 export function resolveSpeakerId(name: string | undefined, people: readonly Person[]): string | undefined {
   if (!name) return undefined;
   const needle = name.trim().toLowerCase();
-  const exact = people.find((p) => p.name.toLowerCase() === needle);
-  if (exact) return exact.id;
-  const byFirst = people.filter((p) => p.name.split(/\s+/)[0]?.toLowerCase() === needle);
-  return byFirst.length === 1 ? byFirst[0].id : undefined;
+  const matches = people.filter((p) => {
+    const full = p.name.trim().toLowerCase();
+    return full === needle || (!/\s/.test(needle) && full.split(/\s+/)[0] === needle);
+  });
+  if (matches.length > 1) throw new Error("Ambiguous speaker name");
+  return matches[0]?.id;
+}
+
+/** Bind every occurrence of the quote to its source turn, never to a model guess. */
+export function resolveQuotedSpeaker(
+  transcript: string,
+  quote: string,
+  people: readonly Person[],
+  modelName?: string,
+): { name?: string; id?: string } {
+  if (!quote || !transcript.includes(quote)) throw new Error("Quote is not verbatim in transcript");
+  // Supported transcript format: a speaker label at the start of a line,
+  // followed by that speaker's text (which may continue on subsequent lines).
+  const labels = [...transcript.matchAll(/^[\t ]*([\p{L}][\p{L}\p{M}\d .'-]{0,79}):[\t ]*/gmu)];
+  const turns = [
+    { name: undefined as string | undefined, start: 0, end: labels[0]?.index ?? transcript.length },
+    ...labels.map((label, i) => ({
+      name: label[1].trim(),
+      start: label.index! + label[0].length,
+      end: labels[i + 1]?.index ?? transcript.length,
+    })),
+  ];
+  const speakers = new Map<string, { name?: string; id?: string }>();
+  for (let at = transcript.indexOf(quote); at !== -1; at = transcript.indexOf(quote, at + 1)) {
+    const turn = turns.find((candidate) => at >= candidate.start && at + quote.length <= candidate.end);
+    if (!turn) throw new Error("Quote crosses a speaker turn or includes a speaker label");
+    const id = resolveSpeakerId(turn.name, people);
+    const key = id ? `id:${id}` : `label:${turn.name?.toLowerCase() ?? ""}`;
+    speakers.set(key, { name: turn.name, id });
+  }
+  if (speakers.size !== 1) throw new Error("Ambiguous quote speaker");
+  const speaker = [...speakers.values()][0];
+  if (modelName && modelName.trim().toLowerCase() !== speaker.name?.toLowerCase()) {
+    if (!speaker.id || resolveSpeakerId(modelName, people) !== speaker.id) {
+      throw new Error("Model speaker conflicts with the quoted transcript turn");
+    }
+  }
+  return speaker;
 }
