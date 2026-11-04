@@ -345,8 +345,34 @@ describe("quoted-turn speaker binding", () => {
 describe("process-local exact handover retries", () => {
   beforeEach(() => resetStore());
   const quote = "The client prefers a phone call before noon.";
-  const input = { workspaceId: "ws-demo", clientId: "cl-janssens", transcript: `Nadia: ${quote}` };
+  const input = { workspaceId: "ws-demo", clientId: "cl-janssens", transcript: `Nadia: ${quote}`, saidAt: "2026-09-29" };
   const reply = JSON.stringify({ claims: [{ text: quote, quote, topics: ["contact"], speakerName: "Nadia" }] });
+
+  it("uses the explicit handover source date for the claim and transcript", async () => {
+    const generate = vi.fn(async () => reply);
+    await captureHandoverOnce(input, generate);
+    const stored = listClaims("ws-demo", "cl-janssens").find((claim) => claim.id.startsWith("claim-live-"));
+    expect(stored?.saidAt).toBe("2026-09-29");
+    const transcript = listDocuments("ws-demo", "cl-janssens").find((doc) => doc.id.startsWith("doc-live-"));
+    expect(transcript?.updatedAt).toBe("2026-09-29");
+    expect(transcript?.title).toContain("2026-09-29");
+  });
+
+  it("rejects an invalid or missing handover date before any model call", async () => {
+    const generate = vi.fn(async () => reply);
+    await expect(captureHandoverOnce({ ...input, saidAt: "" }, generate)).rejects.toThrow("Invalid handover date");
+    await expect(captureHandoverOnce({ ...input, saidAt: "2026-02-30" }, generate)).rejects.toThrow("Invalid handover date");
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("treats the same transcript on a different source date as a distinct handover", async () => {
+    const generate = vi.fn(async () => reply);
+    await captureHandoverOnce(input, generate);
+    await captureHandoverOnce({ ...input, saidAt: "2026-09-30" }, generate);
+    expect(generate).toHaveBeenCalledTimes(2);
+    const docs = listDocuments("ws-demo", "cl-janssens").filter((doc) => doc.content === input.transcript);
+    expect(docs.map((doc) => doc.updatedAt).sort()).toEqual(["2026-09-29", "2026-09-30"]);
+  });
 
   it("handles sequential replay without another model call or stored record", async () => {
     const generate = vi.fn(async () => reply);
@@ -428,7 +454,7 @@ describe("process-local exact handover retries", () => {
   });
 
   it.each([
-    { workspaceId: "ws-other" }, { clientId: "missing-client" }, { transcript: "too short" },
+    { workspaceId: "ws-other" }, { clientId: "missing-client" }, { transcript: "too short" }, { saidAt: "not-a-date" },
   ])("rejects invalid input before any model call: %j", async (change) => {
     const generate = vi.fn(async () => reply);
     await expect(async () => captureHandoverOnce({ ...input, ...change }, generate)).rejects.toThrow();
