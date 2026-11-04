@@ -105,21 +105,32 @@ export function getClaim(workspaceId: string, claimId: string): Claim | undefine
   return store().claims.find((c) => c.workspaceId === workspaceId && c.id === claimId);
 }
 
+function requireIsoDate(value: string): string {
+  const date = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid handover date");
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error("Invalid handover date");
+  }
+  return date;
+}
+
 /** Coalesce exact retries before generation, within this server process only. */
 export function captureHandoverOnce(
-  input: { workspaceId: string; clientId: string; transcript: string },
+  input: { workspaceId: string; clientId: string; transcript: string; saidAt: string },
   generateText: TextGenerator,
 ): Promise<void> {
   const { workspaceId, clientId } = input;
   const transcript = input.transcript.trim();
+  const saidAt = requireIsoDate(input.saidAt);
   const client = getClient(workspaceId, clientId);
   if (!client) throw new Error("Client not found");
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
   const s = store();
   if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === workspaceId &&
-    d.clientId === clientId && d.content.trim() === transcript)) return Promise.resolve();
+    d.clientId === clientId && d.updatedAt === saidAt && d.content.trim() === transcript)) return Promise.resolve();
 
-  const key = createHash("sha256").update(JSON.stringify([workspaceId, clientId, transcript])).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify([workspaceId, clientId, saidAt, transcript])).digest("hex");
   const pending = s.handoversInFlight ??= new Map();
   const existing = pending.get(key);
   if (existing) return existing;
@@ -127,7 +138,6 @@ export function captureHandoverOnce(
   const operation = Promise.resolve().then(async () => {
     const people = listPeople(workspaceId);
     const drafts = await extractClaimsFromTranscript(transcript, generateText, people);
-    const saidAt = new Date().toISOString().slice(0, 10);
     const documentId = `doc-live-${randomUUID()}`;
     const claims: Claim[] = drafts.map((draft) => ({
       id: `claim-live-${randomUUID()}`, workspaceId, clientId,
@@ -155,12 +165,13 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
   if (!document.clientId) throw new Error("Handover transcript must belong to a client");
   const client = s.clients.find((x) => x.workspaceId === document.workspaceId && x.id === document.clientId);
   if (!client) throw new Error("Client not found");
+  const sourceDate = requireIsoDate(document.updatedAt);
   if (claims.length === 0 || claims.length > 5) throw new Error("Handover must contain 1 to 5 claims");
   if (s.documents.some((d) => d.id === document.id) || claims.some((claim) => s.claims.some((x) => x.id === claim.id))) {
     throw new Error("Handover id already exists");
   }
   if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === document.workspaceId &&
-    d.clientId === document.clientId && d.content.trim() === document.content.trim())) {
+    d.clientId === document.clientId && d.updatedAt === sourceDate && d.content.trim() === document.content.trim())) {
     throw new Error("Handover transcript already exists");
   }
   const people = listPeople(document.workspaceId);
@@ -170,6 +181,7 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
       throw new Error("Claim scope does not match transcript");
     }
     if (claim.sourceDocumentId !== document.id) throw new Error("Claim source does not match transcript");
+    if (claim.saidAt !== sourceDate) throw new Error("Claim date does not match transcript source date");
     if (!claim.quote || !document.content.includes(claim.quote)) {
       throw new Error("Claim quote is not verbatim in transcript");
     }
