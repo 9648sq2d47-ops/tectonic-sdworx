@@ -19,6 +19,7 @@ async function captureHandover(formData: FormData) {
   const workspaceId = String(formData.get("workspaceId") ?? "");
   const clientId = String(formData.get("clientId") ?? "");
   const transcript = String(formData.get("transcript") ?? "").trim();
+  const saidAt = String(formData.get("saidAt") ?? "").trim();
 
   const { user } = await requireWorkspaceMember(workspaceId);
   const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
@@ -28,7 +29,7 @@ async function captureHandover(formData: FormData) {
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
   if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
 
-  await captureHandoverOnce({ workspaceId, clientId, transcript }, generateText);
+  await captureHandoverOnce({ workspaceId, clientId, transcript, saidAt }, generateText);
   invalidateAssessmentCache(workspaceId, clientId);
   revalidatePath(`/w/${workspaceId}/clients/${clientId}`);
 }
@@ -76,6 +77,15 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
         <form action={captureHandover} className="mt-4 flex flex-col gap-3">
           <input type="hidden" name="workspaceId" value={workspaceId} />
           <input type="hidden" name="clientId" value={clientId} />
+          <label className="flex max-w-xs flex-col gap-1 text-sm text-body">
+            Handover date
+            <input
+              type="date"
+              name="saidAt"
+              required
+              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+          </label>
           <textarea
             name="transcript"
             minLength={40}
