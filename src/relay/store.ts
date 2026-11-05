@@ -188,7 +188,7 @@ export function addHandover(input: { document: KnowledgeDocument; claims: Claim[
     if (claim.text !== claim.quote || claim.text.length < 5 || claim.text.length > 240 || claim.text.trim() !== claim.text) {
       throw new Error("Claim text must equal its verbatim source quote (5 to 240 characters)");
     }
-    const speakerId = resolveQuotedSpeaker(document.content, claim.quote, people).id;
+    const speakerId = resolveQuotedSpeaker(document.content, claim.quote, people, undefined, { requireCompleteTurn: true }).id;
     if (claim.speakerId !== undefined && claim.speakerId !== speakerId) {
       throw new Error("Claim speaker conflicts with the quoted transcript turn");
     }

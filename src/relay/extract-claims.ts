@@ -22,7 +22,8 @@ const SYSTEM = [
   "Return 1 to 5 explicit factual statements only.",
   "Never infer facts that were not said.",
   "Each quote must be an exact contiguous substring of the transcript.",
-  "Set text and quote to the same complete, verbatim statement of 5 to 240 characters.",
+  "Set text and quote to the entire text of one source speaker turn, excluding its label and surrounding whitespace (5 to 240 characters).",
+  "Never select an isolated clause or sentence from a longer turn; skip turns over 240 characters instead of truncating them.",
   "Preserve negations and conditions; never paraphrase or shorten the statement's meaning.",
   "Use the speaker label of the turn containing the quote; omit speakerName for unlabeled text.",
   "Use lowercase kebab-case topics.",
@@ -55,7 +56,7 @@ export async function extractClaimsFromTranscript(
     if (claim.text !== claim.quote) {
       throw new Error("Claim text must equal its verbatim source quote");
     }
-    const speaker = resolveQuotedSpeaker(source, claim.quote, people, claim.speakerName);
+    const speaker = resolveQuotedSpeaker(source, claim.quote, people, claim.speakerName, { requireCompleteTurn: true });
     const key = claim.text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -120,6 +121,7 @@ export function resolveQuotedSpeaker(
   quote: string,
   people: readonly Person[],
   modelName?: string,
+  options: { requireCompleteTurn?: boolean } = {},
 ): { name?: string; id?: string } {
   if (!quote || !transcript.includes(quote)) throw new Error("Quote is not verbatim in transcript");
   // Supported transcript format: a speaker label at the start of a line,
@@ -137,6 +139,9 @@ export function resolveQuotedSpeaker(
   for (let at = transcript.indexOf(quote); at !== -1; at = transcript.indexOf(quote, at + 1)) {
     const turn = turns.find((candidate) => at >= candidate.start && at + quote.length <= candidate.end);
     if (!turn) throw new Error("Quote crosses a speaker turn or includes a speaker label");
+    if (options.requireCompleteTurn && transcript.slice(turn.start, turn.end).trim() !== quote) {
+      throw new Error("Claim quote must preserve the complete source turn");
+    }
     const id = resolveSpeakerId(turn.name, people);
     const key = id ? `id:${id}` : `label:${turn.name?.toLowerCase() ?? ""}`;
     speakers.set(key, { name: turn.name, id });

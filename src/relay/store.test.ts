@@ -255,6 +255,82 @@ describe("store is workspace-scoped", () => {
   });
 });
 
+describe("complete source turn context", () => {
+  beforeEach(() => resetStore());
+
+  const statement = "Meal vouchers are eight euro per day.";
+  const negation = "It is not true that meal vouchers are eight euro per day.";
+  const condition = "Only if the new agreement is signed, meal vouchers are eight euro per day.";
+  const clipped = [
+    { name: "leading negation", transcript: `Nadia: ${negation}`, quote: "meal vouchers are eight euro per day." },
+    { name: "leading condition", transcript: `Nadia: ${condition}`, quote: "meal vouchers are eight euro per day." },
+    { name: "trailing condition", transcript: "Nadia: Meal vouchers are eight euro per day, only if the new agreement is signed.", quote: "Meal vouchers are eight euro per day" },
+    { name: "preceding sentence", transcript: `Nadia: The following sentence is false. ${statement}`, quote: statement },
+    { name: "following sentence", transcript: `Nadia: ${statement} This applies only if the new agreement is signed.`, quote: statement },
+    { name: "multiline qualifier", transcript: `Nadia: The following sentence is false.\r\n${statement}`, quote: statement },
+    { name: "a complete and an embedded occurrence", transcript: `Nadia: ${statement}\nNadia: The following sentence is false. ${statement}`, quote: statement },
+    { name: "Dutch negation", transcript: "Nadia: Het is niet waar dat maaltijdcheques acht euro per dag bedragen.", quote: "maaltijdcheques acht euro per dag bedragen." },
+    { name: "Dutch condition", transcript: "Nadia: Alleen als de overeenkomst getekend is, bedragen de maaltijdcheques acht euro per dag.", quote: "bedragen de maaltijdcheques acht euro per dag." },
+    { name: "a source turn longer than the claim limit", transcript: `Nadia: ${"Context about this agreement must be retained. ".repeat(6)}${statement}`, quote: statement },
+  ];
+
+  it.each(clipped)("rejects extraction that omits $name", async ({ transcript, quote }) => {
+    const generate = vi.fn(async () => JSON.stringify({
+      claims: [{ text: quote, quote, topics: ["meal-vouchers"], speakerName: "Nadia" }],
+    }));
+    await expect(extractClaimsFromTranscript(transcript, generate, PEOPLE)).rejects.toThrow("complete source turn");
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(clipped)("rejects direct storage that omits $name without writing", ({ transcript, quote }) => {
+    const input = liveHandover(quote, ["meal-vouchers"]);
+    input.document.content = transcript;
+    input.claims[0].anchors = legalAnchorsForClaim(input.claims[0], clientJurisdiction);
+    const documents = listDocuments("ws-demo").length;
+    const claims = listClaims("ws-demo", input.document.clientId!).length;
+
+    expect(() => addHandover(input)).toThrow("complete source turn");
+    expect(listDocuments("ws-demo")).toHaveLength(documents);
+    expect(listClaims("ws-demo", input.document.clientId!)).toHaveLength(claims);
+    expect(getDocument("ws-demo", input.document.id)).toBeUndefined();
+  });
+
+  it.each([
+    { name: "full negation", transcript: `Nadia: ${negation}`, quote: negation },
+    { name: "full condition", transcript: `Nadia: ${condition}`, quote: condition },
+    { name: "full multiline turn", transcript: `Nadia: The following sentence is false.\r\n${statement}`, quote: `The following sentence is false.\r\n${statement}` },
+    { name: "unlabeled source", transcript: negation, quote: negation },
+    { name: "separate speaker turns", transcript: `Nadia: ${statement}\nEls: I will check the file tomorrow.`, quote: statement },
+    { name: "repeated complete turns", transcript: `Nadia: ${statement}\nNadia: ${statement}`, quote: statement },
+    { name: "surrounding whitespace", transcript: ` \n  Nadia: \t${statement} \r\n`, quote: statement },
+  ])("preserves $name through extraction and storage", async ({ transcript, quote }) => {
+    const drafts = await extractClaimsFromTranscript(transcript, async () => JSON.stringify({
+      claims: [{ text: quote, quote, topics: ["meal-vouchers"] }],
+    }), PEOPLE);
+    expect(drafts[0].text).toBe(quote);
+    expect(drafts[0].quote).toBe(quote);
+
+    const input = liveHandover(quote, drafts[0].topics);
+    input.document.content = transcript;
+    input.claims[0].anchors = legalAnchorsForClaim(drafts[0], clientJurisdiction);
+    addHandover(input);
+    expect(getClaim("ws-demo", input.claims[0].id)?.quote).toBe(quote);
+  });
+
+  it("does not store an earlier valid claim when a later claim clips its context", () => {
+    const input = liveHandover();
+    input.document.content += `\nNadia: ${negation}`;
+    input.claims.push({ ...input.claims[0], id: "claim-clipped-second", text: "meal vouchers are eight euro per day.", quote: "meal vouchers are eight euro per day." });
+    const claims = listClaims("ws-demo", input.document.clientId!).length;
+
+    expect(() => addHandover(input)).toThrow("complete source turn");
+    expect(getDocument("ws-demo", input.document.id)).toBeUndefined();
+    expect(getClaim("ws-demo", input.claims[0].id)).toBeUndefined();
+    expect(getClaim("ws-demo", input.claims[1].id)).toBeUndefined();
+    expect(listClaims("ws-demo", input.document.clientId!)).toHaveLength(claims);
+  });
+});
+
 describe("quoted-turn speaker binding", () => {
   beforeEach(() => resetStore());
   const quote = "The client prefers a phone call before noon.";
