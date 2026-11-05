@@ -358,10 +358,10 @@ describe("process-local exact handover retries", () => {
     expect(transcript?.title).toContain("2026-09-29");
   });
 
-  it("rejects an invalid or missing handover date before any model call", async () => {
+  it("rejects an invalid or missing handover date before any model call", () => {
     const generate = vi.fn(async () => reply);
-    await expect(captureHandoverOnce({ ...input, saidAt: "" }, generate)).rejects.toThrow("Invalid handover date");
-    await expect(captureHandoverOnce({ ...input, saidAt: "2026-02-30" }, generate)).rejects.toThrow("Invalid handover date");
+    expect(() => captureHandoverOnce({ ...input, saidAt: "" }, generate)).toThrow("Invalid handover date");
+    expect(() => captureHandoverOnce({ ...input, saidAt: "2026-02-30" }, generate)).toThrow("Invalid handover date");
     expect(generate).not.toHaveBeenCalled();
   });
 
