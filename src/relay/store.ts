@@ -2,6 +2,7 @@
  * In-memory store seeded from the demo fixtures. Every read is workspace-scoped:
  * callers never fetch a record by id alone.
  */
+import { createHash, randomUUID } from "node:crypto";
 import type {
   Claim,
   ClaimReview,
@@ -13,6 +14,7 @@ import type {
   Workspace,
 } from "./types";
 import * as demo from "./fixtures/demo-workspace";
+import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveQuotedSpeaker, type TextGenerator } from "./extract-claims";
 
 interface Store {
   workspaces: Workspace[];
@@ -22,6 +24,7 @@ interface Store {
   documents: KnowledgeDocument[];
   claims: Claim[];
   reviews: Map<string, ClaimReview>; // key: `${workspaceId}/${claimId}`
+  handoversInFlight?: Map<string, Promise<void>>;
 }
 
 declare global {
@@ -100,6 +103,109 @@ export function listClaims(workspaceId: string, clientId: string): Claim[] {
 
 export function getClaim(workspaceId: string, claimId: string): Claim | undefined {
   return store().claims.find((c) => c.workspaceId === workspaceId && c.id === claimId);
+}
+
+function requireIsoDate(value: string): string {
+  const date = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid handover date");
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    throw new Error("Invalid handover date");
+  }
+  return date;
+}
+
+/** Coalesce exact retries before generation, within this server process only. */
+export function captureHandoverOnce(
+  input: { workspaceId: string; clientId: string; transcript: string; saidAt: string },
+  generateText: TextGenerator,
+): Promise<void> {
+  const { workspaceId, clientId } = input;
+  const transcript = input.transcript.trim();
+  const saidAt = requireIsoDate(input.saidAt);
+  const client = getClient(workspaceId, clientId);
+  if (!client) throw new Error("Client not found");
+  if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
+  const s = store();
+  if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === workspaceId &&
+    d.clientId === clientId && d.updatedAt === saidAt && d.content.trim() === transcript)) return Promise.resolve();
+
+  const key = createHash("sha256").update(JSON.stringify([workspaceId, clientId, saidAt, transcript])).digest("hex");
+  const pending = s.handoversInFlight ??= new Map();
+  const existing = pending.get(key);
+  if (existing) return existing;
+  // Queue the work so the reservation is set synchronously before any model call.
+  const operation: Promise<void> = Promise.resolve().then(async () => {
+    const people = listPeople(workspaceId);
+    const drafts = await extractClaimsFromTranscript(transcript, generateText, people);
+    const documentId = `doc-live-${randomUUID()}`;
+    const claims: Claim[] = drafts.map((draft) => ({
+      id: `claim-live-${randomUUID()}`, workspaceId, clientId,
+      text: draft.text, quote: draft.quote,
+      speakerId: resolveQuotedSpeaker(transcript, draft.quote, people, draft.speakerName).id,
+      saidAt, sourceDocumentId: documentId, topics: draft.topics,
+      anchors: legalAnchorsForClaim(draft, client.jurisdiction),
+    }));
+    addHandover({
+      document: {
+        id: documentId, workspaceId, clientId, kind: "transcript",
+        title: `Live handover ${saidAt}`, content: transcript, updatedAt: saidAt,
+        topics: [...new Set(drafts.flatMap((draft) => draft.topics))],
+      },
+      claims,
+    });
+  }).finally(() => {
+    if (pending.get(key) === operation) pending.delete(key);
+  });
+  pending.set(key, operation);
+  return operation;
+}
+
+export function addHandover(input: { document: KnowledgeDocument; claims: Claim[] }): void {
+  const { document, claims } = input;
+  const s = store();
+  if (!document.clientId) throw new Error("Handover transcript must belong to a client");
+  const client = s.clients.find((x) => x.workspaceId === document.workspaceId && x.id === document.clientId);
+  if (!client) throw new Error("Client not found");
+  const sourceDate = requireIsoDate(document.updatedAt);
+  if (claims.length === 0 || claims.length > 5) throw new Error("Handover must contain 1 to 5 claims");
+  if (s.documents.some((d) => d.id === document.id) || claims.some((claim) => s.claims.some((x) => x.id === claim.id))) {
+    throw new Error("Handover id already exists");
+  }
+  if (s.documents.some((d) => d.kind === "transcript" && d.workspaceId === document.workspaceId &&
+    d.clientId === document.clientId && d.updatedAt === sourceDate && d.content.trim() === document.content.trim())) {
+    throw new Error("Handover transcript already exists");
+  }
+  const people = listPeople(document.workspaceId);
+  const validatedClaims: Claim[] = [];
+  for (const claim of claims) {
+    if (claim.workspaceId !== document.workspaceId || claim.clientId !== document.clientId) {
+      throw new Error("Claim scope does not match transcript");
+    }
+    if (claim.sourceDocumentId !== document.id) throw new Error("Claim source does not match transcript");
+    if (claim.saidAt !== sourceDate) throw new Error("Claim date does not match transcript source date");
+    if (!claim.quote || !document.content.includes(claim.quote)) {
+      throw new Error("Claim quote is not verbatim in transcript");
+    }
+    if (claim.text !== claim.quote || claim.text.length < 5 || claim.text.length > 240 || claim.text.trim() !== claim.text) {
+      throw new Error("Claim text must equal its verbatim source quote (5 to 240 characters)");
+    }
+    const speakerId = resolveQuotedSpeaker(document.content, claim.quote, people, undefined, { requireCompleteTurn: true }).id;
+    if (claim.speakerId !== undefined && claim.speakerId !== speakerId) {
+      throw new Error("Claim speaker conflicts with the quoted transcript turn");
+    }
+    const expected = legalAnchorsForClaim(claim, client.jurisdiction);
+    if (!Array.isArray(claim.anchors) || claim.anchors.length !== expected.length || expected.some((anchor) =>
+      !claim.anchors.some((actual) => actual.topic === anchor.topic && actual.reference === undefined &&
+        actual.jurisdiction?.country === anchor.jurisdiction.country &&
+        actual.jurisdiction?.region === anchor.jurisdiction.region &&
+        actual.jurisdiction?.jointCommittee === anchor.jurisdiction.jointCommittee))) {
+      throw new Error("Legal anchors do not match the validated client context");
+    }
+    validatedClaims.push({ ...claim, speakerId });
+  }
+  s.documents.push(document);
+  s.claims.push(...validatedClaims);
 }
 
 export function getReview(workspaceId: string, claimId: string): ClaimReview | undefined {

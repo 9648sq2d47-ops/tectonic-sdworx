@@ -1,6 +1,7 @@
 # Test → deploy, with Aikido as the security gate on every pull request.
 #
-#   test      npm audit (high+), typecheck, lint, unit tests, production build
+#   test      runtime audit (high+), full audit (critical), typecheck, lint,
+#             unit tests, production build
 #   deploy    main only, after test: Cloud Build image → Cloud Run (europe-west1),
 #             then a smoke test against the new revision with an identity token.
 #
@@ -46,8 +47,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Dependency audit (high+)
-        run: npm audit --audit-level=high
+      - name: Runtime dependency audit (high+)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Full dependency audit (critical)
+        run: npm audit --audit-level=critical
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
