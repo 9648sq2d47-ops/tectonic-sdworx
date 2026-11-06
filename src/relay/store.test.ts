@@ -4,7 +4,7 @@ import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveQuotedSpeaker
 import { regulationWatch } from "./signals/regulation-watch";
 import { createContext } from "./testing";
 import type { Jurisdiction } from "./types";
-import { addHandover, captureHandoverOnce, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, listDocuments, resetStore, setReview, getReview } from "./store";
+import { addHandover, captureHandoverOnce, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, listDocuments, listPeople, resetStore, setReview, getReview } from "./store";
 
 const clientJurisdiction = CLIENTS.find((client) => client.id === "cl-janssens")!.jurisdiction;
 
@@ -366,28 +366,28 @@ describe("quoted-turn speaker binding", () => {
     expect(resolveQuotedSpeaker(`Visitor: ${quote}`, quote, PEOPLE).id).toBeUndefined();
   });
 
-  it("keeps unlabeled text unassigned and rejects a model-invented speaker", async () => {
+  it("keeps unlabeled text unassigned even when the model suggests a speaker", async () => {
     expect((await extractClaimsFromTranscript(quote, async () => reply(), PEOPLE))[0].speakerName).toBeUndefined();
-    await expect(extractClaimsFromTranscript(quote, async () => reply("Nadia"), PEOPLE)).rejects.toThrow("conflicts");
+    expect((await extractClaimsFromTranscript(quote, async () => reply("Nadia"), PEOPLE))[0].speakerName).toBeUndefined();
   });
 
-  it.each(["Els", "Visitor"])("rejects the same quotation attributed to Nadia and %s", async (other) => {
-    await expect(extractClaimsFromTranscript(`Nadia: ${quote}\n${other}: ${quote}`, async () => reply("Nadia"), PEOPLE))
-      .rejects.toThrow("Ambiguous quote speaker");
+  it.each(["Els", "Visitor"])("keeps the same quotation by Nadia and %s unassigned", async (other) => {
+    const drafts = await extractClaimsFromTranscript(`Nadia: ${quote}\n${other}: ${quote}`, async () => reply("Nadia"), PEOPLE);
+    expect(drafts[0].speakerName).toBeUndefined();
   });
 
-  it("rejects a quote occurring both before the labels and in a labeled turn", () => {
-    expect(() => resolveQuotedSpeaker(`${quote}\nNadia: ${quote}`, quote, PEOPLE)).toThrow("Ambiguous quote speaker");
+  it("keeps a quote occurring before the labels and in a labeled turn unassigned", () => {
+    expect(resolveQuotedSpeaker(`${quote}\nNadia: ${quote}`, quote, PEOPLE)).toEqual({});
   });
 
   it("allows repeated quotes from the same uniquely resolved speaker", () => {
     expect(resolveQuotedSpeaker(`Nadia: ${quote}\nNadia Haddad: ${quote}`, quote, PEOPLE).id).toBe("p-nadia");
   });
 
-  it.each(["Nadia Haddad", "Nadia Other", "Nadia"])("rejects ambiguous person records: %s", (name) => {
+  it.each(["Nadia Haddad", "Nadia Other", "Nadia"])("does not assign ambiguous person records: %s", (name) => {
     const people = [...PEOPLE, { ...PEOPLE[0], id: "p-second-nadia", name }];
     const label = name === "Nadia Haddad" ? "Nadia Haddad" : "Nadia";
-    expect(() => resolveQuotedSpeaker(`${label}: ${quote}`, quote, people)).toThrow("Ambiguous speaker name");
+    expect(resolveQuotedSpeaker(`${label}: ${quote}`, quote, people)).toEqual({});
   });
 
   it("binds a multiline continuation to the preceding speaker label", () => {
@@ -554,5 +554,73 @@ describe("process-local exact handover retries", () => {
     resetStore();
     await captureHandoverOnce(input, generate);
     expect(generate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("speaker fallback and reservation ownership", () => {
+  beforeEach(() => resetStore());
+  const quote = "The client prefers a phone call before noon.";
+  const input = { workspaceId: "ws-demo", clientId: "cl-janssens", transcript: `Nadia: ${quote}`, saidAt: "2026-09-29" };
+  const reply = (speakerName?: string) => JSON.stringify({
+    claims: [{ text: quote, quote, topics: ["contact"], speakerName }],
+  });
+
+  it.each([undefined, "Nadia"])("stores an ambiguous quoted turn without a speaker: %s", async (speakerName) => {
+    const transcript = `Nadia: ${quote}\nEls: ${quote}`;
+    await captureHandoverOnce({ ...input, transcript }, async () => reply(speakerName));
+    const document = listDocuments("ws-demo", "cl-janssens").find((d) => d.content === transcript)!;
+    const claim = listClaims("ws-demo", "cl-janssens").find((c) => c.sourceDocumentId === document.id)!;
+    expect(claim.speakerId).toBeUndefined();
+  });
+
+  it("does not choose between people sharing a source label", async () => {
+    listPeople("ws-demo");
+    globalThis.__relayStore!.people.push({ ...PEOPLE[0], id: "p-other-nadia", name: "Nadia Other" });
+    await captureHandoverOnce(input, async () => reply("Nadia Haddad"));
+    const document = listDocuments("ws-demo", "cl-janssens").find((d) => d.content === input.transcript)!;
+    expect(listClaims("ws-demo", "cl-janssens").find((c) => c.sourceDocumentId === document.id)?.speakerId).toBeUndefined();
+  });
+
+  it("keeps an unlabeled quote unassigned despite a suggested model name", async () => {
+    await captureHandoverOnce({ ...input, transcript: quote }, async () => reply("Nadia"));
+    const document = listDocuments("ws-demo", "cl-janssens").find((d) => d.content === quote)!;
+    expect(listClaims("ws-demo", "cl-janssens").find((c) => c.sourceDocumentId === document.id)?.speakerId).toBeUndefined();
+  });
+
+  it("cannot delete a successor reservation when its own request fails", async () => {
+    let reject!: (reason: Error) => void;
+    const generate = vi.fn(() => new Promise<string>((_resolve, rejectPromise) => { reject = rejectPromise; }));
+    const first = captureHandoverOnce(input, generate);
+    await Promise.resolve();
+    const pending = globalThis.__relayStore!.handoversInFlight!;
+    const key = [...pending.keys()][0];
+    const successor = Promise.resolve();
+    pending.set(key, successor);
+    reject(new Error("Synthetic failure of previous owner"));
+    await expect(first).rejects.toThrow("previous owner");
+    expect(captureHandoverOnce(input, generate)).toBe(successor);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === input.transcript)).toBe(false);
+  });
+
+  it("rejects a second claim with a wrong speaker without partial storage and permits retry", async () => {
+    const other = "The client asks to receive the invoice by email.";
+    const transcript = `Nadia: ${quote}\nEls: ${other}`;
+    const beforeDocuments = listDocuments("ws-demo", "cl-janssens").length;
+    const beforeClaims = listClaims("ws-demo", "cl-janssens").length;
+    const generate = vi.fn(async () => JSON.stringify({
+      claims: [
+        { text: quote, quote, topics: ["contact"], speakerName: "Nadia" },
+        { text: other, quote: other, topics: ["contact"], speakerName: "Nadia" },
+      ],
+    }));
+    await expect(captureHandoverOnce({ ...input, transcript }, generate)).rejects.toThrow("conflicts");
+    expect(listDocuments("ws-demo", "cl-janssens")).toHaveLength(beforeDocuments);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(beforeClaims);
+    generate.mockResolvedValue(reply("Nadia"));
+    await captureHandoverOnce({ ...input, transcript }, generate);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(listDocuments("ws-demo", "cl-janssens")).toHaveLength(beforeDocuments + 1);
+    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(beforeClaims + 1);
   });
 });

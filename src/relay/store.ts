@@ -135,7 +135,7 @@ export function captureHandoverOnce(
   const existing = pending.get(key);
   if (existing) return existing;
   // Queue the work so the reservation is set synchronously before any model call.
-  const operation = Promise.resolve().then(async () => {
+  const operation: Promise<void> = Promise.resolve().then(async () => {
     const people = listPeople(workspaceId);
     const drafts = await extractClaimsFromTranscript(transcript, generateText, people);
     const documentId = `doc-live-${randomUUID()}`;
@@ -154,7 +154,9 @@ export function captureHandoverOnce(
       },
       claims,
     });
-  }).finally(() => pending.delete(key));
+  }).finally(() => {
+    if (pending.get(key) === operation) pending.delete(key);
+  });
   pending.set(key, operation);
   return operation;
 }

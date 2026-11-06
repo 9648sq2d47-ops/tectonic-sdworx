@@ -104,15 +104,18 @@ export function legalAnchorsForClaim(
   return topics.map((topic) => ({ topic, jurisdiction: { ...context } }));
 }
 
-export function resolveSpeakerId(name: string | undefined, people: readonly Person[]): string | undefined {
-  if (!name) return undefined;
+function matchingSpeakers(name: string | undefined, people: readonly Person[]): Person[] {
+  if (!name) return [];
   const needle = name.trim().toLowerCase();
-  const matches = people.filter((p) => {
+  return people.filter((p) => {
     const full = p.name.trim().toLowerCase();
     return full === needle || (!/\s/.test(needle) && full.split(/\s+/)[0] === needle);
   });
-  if (matches.length > 1) throw new Error("Ambiguous speaker name");
-  return matches[0]?.id;
+}
+
+export function resolveSpeakerId(name: string | undefined, people: readonly Person[]): string | undefined {
+  const matches = matchingSpeakers(name, people);
+  return matches.length === 1 ? matches[0].id : undefined;
 }
 
 /** Bind every occurrence of the quote to its source turn, never to a model guess. */
@@ -136,18 +139,23 @@ export function resolveQuotedSpeaker(
     })),
   ];
   const speakers = new Map<string, { name?: string; id?: string }>();
+  let ambiguousPerson = false;
   for (let at = transcript.indexOf(quote); at !== -1; at = transcript.indexOf(quote, at + 1)) {
     const turn = turns.find((candidate) => at >= candidate.start && at + quote.length <= candidate.end);
     if (!turn) throw new Error("Quote crosses a speaker turn or includes a speaker label");
     if (options.requireCompleteTurn && transcript.slice(turn.start, turn.end).trim() !== quote) {
       throw new Error("Claim quote must preserve the complete source turn");
     }
-    const id = resolveSpeakerId(turn.name, people);
+    const matches = matchingSpeakers(turn.name, people);
+    ambiguousPerson ||= matches.length > 1;
+    const id = matches.length === 1 ? matches[0].id : undefined;
     const key = id ? `id:${id}` : `label:${turn.name?.toLowerCase() ?? ""}`;
     speakers.set(key, { name: turn.name, id });
   }
-  if (speakers.size !== 1) throw new Error("Ambiguous quote speaker");
+  // Missing or ambiguous source labels never authorize a model-selected person.
+  if (ambiguousPerson || speakers.size !== 1) return {};
   const speaker = [...speakers.values()][0];
+  if (!speaker.name) return {};
   if (modelName && modelName.trim().toLowerCase() !== speaker.name?.toLowerCase()) {
     if (!speaker.id || resolveSpeakerId(modelName, people) !== speaker.id) {
       throw new Error("Model speaker conflicts with the quoted transcript turn");
