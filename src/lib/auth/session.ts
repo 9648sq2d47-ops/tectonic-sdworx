@@ -1,13 +1,13 @@
 /**
  * Stateless, HMAC-signed session cookie. No provider, no database.
- * Payload: { sub: userId, exp: unix seconds }.
+ * Payload: { sub: userId, exp: unix seconds, sid: random session id }.
  *
  * Sign-out is backed by a small in-process revocation list keyed by the token's
  * signature, so a token that was signed out stops working before it expires. The
  * list only ever holds tokens that were valid when revoked, and entries are dropped
  * once the token would have expired anyway, so it is bounded by the session TTL.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "relay_session";
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
@@ -15,6 +15,8 @@ export const SESSION_TTL_SECONDS = 8 * 60 * 60;
 export interface SessionPayload {
   sub: string;
   exp: number;
+  /** Absent on cookies issued before per-session identifiers were introduced. */
+  sid?: string;
 }
 
 const b64url = (buf: Buffer | string) => Buffer.from(buf).toString("base64url");
@@ -25,7 +27,12 @@ function sign(data: string, secret: string): string {
 
 export function createSessionToken(userId: string, secret: string, now = Date.now()): string {
   if (secret.length < 16) throw new Error("SESSION_SECRET must be at least 16 characters");
-  const payload: SessionPayload = { sub: userId, exp: Math.floor(now / 1000) + SESSION_TTL_SECONDS };
+  const payload: SessionPayload = {
+    sub: userId,
+    exp: Math.floor(now / 1000) + SESSION_TTL_SECONDS,
+    // Different logins must not share a revocation signature, even within one second.
+    sid: randomUUID(),
+  };
   const body = b64url(JSON.stringify(payload));
   return `${body}.${sign(body, secret)}`;
 }
