@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
 import { requireWorkspaceMember, requireWorkspacePage } from "@/lib/auth/access";
 import { generateText } from "@/lib/ai/openai";
@@ -27,7 +27,10 @@ async function captureHandover(formData: FormData) {
   const client = getClient(workspaceId, clientId);
   if (!client) throw new Error("Client not found");
   if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
-  if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
+  if (!env().OPENAI_API_KEY) {
+    refresh();
+    return;
+  }
 
   await captureHandoverOnce({ workspaceId, clientId, transcript, saidAt }, generateText);
   invalidateAssessmentCache(workspaceId, clientId);
@@ -39,6 +42,7 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
   const { user, workspace } = await requireWorkspacePage(workspaceId);
   const client = getClient(workspaceId, clientId);
   if (!client) notFound();
+  const canExtractHandover = Boolean(env().OPENAI_API_KEY);
 
   const { claims, trust, errors } = await assessClientCached(workspaceId, clientId);
   const documents = new Map(listDocuments(workspaceId).map((d) => [d.id, d]));
@@ -74,7 +78,12 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
         <p className="mt-1 text-sm text-body">
           OpenAI extracts explicit statements only. Every created claim must retain an exact source quote before Relay verifies it.
         </p>
-        <form action={captureHandover} className="mt-4 flex flex-col gap-3">
+        {!canExtractHandover ? (
+          <p id="handover-unavailable" role="status" className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-body">
+            OpenAI is not configured. You can still review existing claims and use the verified client brief.
+          </p>
+        ) : null}
+        <form action={captureHandover} aria-describedby={!canExtractHandover ? "handover-unavailable" : undefined} className="mt-4 flex flex-col gap-3">
           <input type="hidden" name="workspaceId" value={workspaceId} />
           <input type="hidden" name="clientId" value={clientId} />
           <label className="flex max-w-xs flex-col gap-1 text-sm text-body">
@@ -83,6 +92,7 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
               type="date"
               name="saidAt"
               required
+              disabled={!canExtractHandover}
               className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
             />
           </label>
@@ -92,11 +102,12 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
             maxLength={8000}
             rows={6}
             required
+            disabled={!canExtractHandover}
             placeholder={"Nadia: Meal vouchers are seven euro face value, one per day worked.\nNadia: Sunday work gets a fifty percent premium."}
             className="w-full rounded-md border border-line bg-surface p-3 text-sm text-ink outline-none focus:border-brand"
           />
           <div>
-            <button type="submit" className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-400">
+            <button type="submit" disabled={!canExtractHandover} className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:cursor-not-allowed disabled:opacity-60">
               Extract claims with OpenAI
             </button>
           </div>
