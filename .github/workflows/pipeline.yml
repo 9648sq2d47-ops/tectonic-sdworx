@@ -1,17 +1,18 @@
-# Test → deploy, with Aikido as the security gate on every pull request.
+# Local repair under SECURITY HOLD: test and build only. Deployment is disabled.
 #
-#   test      runtime audit (high+), full audit (critical), typecheck, lint,
+#   test      runtime audit (high+), full audit (high+), typecheck, lint,
 #             unit tests, production build
-#   deploy    main only, after test: Cloud Build image → Cloud Run (europe-west1),
-#             then a smoke test against the new revision with an identity token.
+#   deploy    retained for separate review, but cannot run on push, PR or dispatch.
+#             A later deployment needs separate authorization and a reviewed gate.
 #
-# Security scanning is done by the Aikido GitHub App connected to this repository: it posts
-# a check on every pull request and blocks merging on new HIGH/CRITICAL findings. Aikido
+# The connected Aikido GitHub App posts a pull-request check. A successful check is
+# not an approval to merge or deploy; enforcement also requires repository rules.
+# Those rules were not active on upstream main during the 9 Nov 2026 source review. Aikido
 # refuses its GitHub Action on a repo the App already protects (HTTP 422), so there is no
 # scan job here on purpose. Make the App's check "required" in branch protection for main.
 #
-# GitHub auth to Google Cloud is keyless (Workload Identity Federation): no service-account
-# key is stored anywhere. One-time setup: scripts/gcp/setup-github-deploy.sh, then set the
+# This workflow uses Workload Identity Federation and configures no service-account key.
+# Historical setup: scripts/gcp/setup-github-deploy.sh, then set the
 # repository variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT.
 name: Pipeline
 
@@ -49,16 +50,17 @@ jobs:
       - run: npm ci
       - name: Runtime dependency audit (high+)
         run: npm audit --omit=dev --audit-level=high
-      - name: Full dependency audit (critical)
-        run: npm audit --audit-level=critical
+      - name: Full dependency audit (high+)
+        run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
 
   deploy:
-    name: Deploy to Cloud Run
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    name: Deploy to Cloud Run (SECURITY HOLD)
+    # No environment flag, API key, green CI or workflow dispatch lifts this HOLD.
+    if: ${{ false }}
     needs: [test]
     runs-on: ubuntu-latest
     environment:

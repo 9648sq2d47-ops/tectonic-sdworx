@@ -58,12 +58,12 @@ describe("regulation-watch matching", () => {
     expect(topicsMatch("indexation", "holiday-pay")).toBe(false);
   });
 
-  it("excludes a notice for another joint committee, and ignores JC when one side is unset", () => {
+  it("excludes another committee and a scoped notice without recorded committee, while retaining national notices", () => {
     const anchor118 = { topic: "indexation", jurisdiction: { country: "BE", jointCommittee: "118" } };
     expect(anchorMatches(anchor118, base)).toBe(false);
     expect(anchorMatches(anchor118, { ...base, jurisdiction: { country: "BE", jointCommittee: "118" } })).toBe(true);
     expect(anchorMatches(anchor118, { ...base, jurisdiction: { country: "BE" } })).toBe(true);
-    expect(anchorMatches({ topic: "indexation", jurisdiction: { country: "BE" } }, base)).toBe(true);
+    expect(anchorMatches({ topic: "indexation", jurisdiction: { country: "BE" } }, base)).toBe(false);
     expect(anchorMatches({ topic: "indexation", jurisdiction: { country: "NL" } }, base)).toBe(false);
   });
 
@@ -160,10 +160,12 @@ describe("regulation-watch with an LLM judgement", () => {
       }),
     });
 
-  it("turns 'supports' into confirmed", async () => {
+  it("does not turn a model's supports verdict into proof of an annual rule from one dated notice", async () => {
     const [r] = await regulationWatch.evaluate([c8], withRelation("supports"));
-    expect(r?.verdict).toBe("confirmed");
-    expect(r?.details?.llmJudged).toBe("supports");
+    expect(r?.verdict).toBe("expiring");
+    expect(r?.details?.llmJudged).toBeUndefined();
+    expect(r?.details?.semanticVerification).toBe("PENDING_HUMAN_REVIEW");
+    expect(r?.evidence.some((e) => e.documentId === "reg:reg-be-jc118-indexation-2026-01")).toBe(true);
   });
 
   it("turns 'contradicts' on an in-force change into outdated", async () => {

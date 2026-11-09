@@ -16,13 +16,13 @@ const EXPECTED: Record<string, Verdict> = {
   c1: "confirmed",
   c2: "contradicted",
   c3: "unsupported",
-  c4: "confirmed",
-  c5: "confirmed",
-  c6: "confirmed",
+  c4: "unsupported", // "shop staff" is not established by the document's "blue-collar workers".
+  c5: "unsupported", // The source says "normally" in May, not an unconditional timing rule.
+  c6: "unsupported", // Number, use and tax conclusion require interpretation across separate sentences.
   c7: "contradicted",
   c8: "unsupported",
   w1: "confirmed",
-  w2: "confirmed",
+  w2: "unsupported", // "Every June" versus "every year in June" needs semantic interpretation.
   w3: "contradicted",
   w4: "confirmed",
   w5: "unsupported",
@@ -31,7 +31,7 @@ const EXPECTED: Record<string, Verdict> = {
   b3: "confirmed",
   b4: "confirmed",
   b5: "unsupported",
-  b6: "confirmed",
+  b6: "unsupported", // "These employees" requires resolving a reference in another sentence.
 };
 
 describe("document-evidence", () => {
@@ -75,14 +75,17 @@ describe("document-evidence", () => {
     expect(r.actions).toEqual([{ type: "ask-expert", label: "Ask Nadia Haddad", personId: "p-nadia" }]);
   });
 
-  it("confirms the joint committee, the holiday fund timing and the delivery vans", async () => {
+  it("retains the located documents but leaves inferred subjects, conditions and cross-sentence meaning for review", async () => {
     const m = await byClaim();
-    expect(m.get("c4")!.evidence[0].documentId).toBe("doc-client-file");
-    expect(m.get("c4")!.evidence[0].excerpt).toContain("Joint Committee 118");
-    expect(m.get("c5")!.evidence[0].documentId).toBe("doc-holiday-note");
-    expect(m.get("c5")!.evidence[0].excerpt).toContain("May");
-    expect(m.get("c6")!.evidence[0].documentId).toBe("doc-company-car-email");
-    expect(m.get("c6")!.evidence[0].excerpt).toContain("not used privately");
+    const documents = { c4: "doc-client-file", c5: "doc-holiday-note", c6: "doc-company-car-email", w2: "doc-willems-eco-email", b6: "doc-debrug-planning-note" };
+    for (const [id, documentId] of Object.entries(documents)) {
+      const result = m.get(id)!;
+      expect(result.verdict).toBe("unsupported");
+      expect(result.evidence).toEqual([]);
+      expect(result.details?.passages).toEqual(expect.arrayContaining([expect.objectContaining({ documentId })]));
+      expect(result.details?.semanticVerification).toBe("PENDING_HUMAN_REVIEW");
+      expect(result.summary).toContain("Meaning requires human review");
+    }
   });
 
   it("contradicts the 50% Sunday premium with the client file, §7 (100%)", async () => {
@@ -148,7 +151,8 @@ describe("document-evidence", () => {
     );
     expect(calls).toBe(CLAIMS.length);
     expect(Object.fromEntries(results.map((r) => [r.claimId, r.verdict]))).toEqual(EXPECTED);
-    expect(logs.some((l) => l.includes("provider down"))).toBe(true);
+    expect(logs.some((l) => l.includes("Provider judgement unavailable or invalid"))).toBe(true);
+    expect(logs.some((l) => l.includes("provider down"))).toBe(false);
   });
 
   it("uses an LLM judgement when one comes back, mapping passage indexes to evidence", async () => {

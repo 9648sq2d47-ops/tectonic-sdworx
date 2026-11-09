@@ -4,6 +4,7 @@ import { extractClaimsFromTranscript, legalAnchorsForClaim, resolveQuotedSpeaker
 import { regulationWatch } from "./signals/regulation-watch";
 import { createContext } from "./testing";
 import type { Jurisdiction } from "./types";
+import { MAX_TURN_CHARS, normalizeTranscript, type CaptureSummary } from "./handover-contract";
 import { addHandover, captureHandoverOnce, findUserByEmail, getClaim, getDocument, isMember, listClaims, listClients, listDocuments, listPeople, resetStore, setReview, getReview } from "./store";
 
 const clientJurisdiction = CLIENTS.find((client) => client.id === "cl-janssens")!.jurisdiction;
@@ -149,12 +150,12 @@ describe("store is workspace-scoped", () => {
     const drafts = await extractClaimsFromTranscript(`Nadia: ${quote}`, async () => JSON.stringify({
       claims: [{ text: quote, quote, topics: ["company-car"] }],
     }));
-    expect(drafts[0].text).toBe(quote);
-    expect(drafts[0].quote).toBe(quote);
+    expect(drafts[0].text).toBe(normalizeTranscript(quote));
+    expect(drafts[0].quote).toBe(normalizeTranscript(quote));
   });
 
-  it("rejects a verbatim statement over 240 characters", async () => {
-    const quote = "a".repeat(241);
+  it("rejects a verbatim statement over the shared turn limit", async () => {
+    const quote = "a".repeat(MAX_TURN_CHARS + 1);
     await expect(extractClaimsFromTranscript(`Nadia: ${quote}`, async () => JSON.stringify({
       claims: [{ text: quote, quote, topics: ["contact"] }],
     }))).rejects.toThrow();
@@ -268,10 +269,9 @@ describe("complete source turn context", () => {
     { name: "preceding sentence", transcript: `Nadia: The following sentence is false. ${statement}`, quote: statement },
     { name: "following sentence", transcript: `Nadia: ${statement} This applies only if the new agreement is signed.`, quote: statement },
     { name: "multiline qualifier", transcript: `Nadia: The following sentence is false.\r\n${statement}`, quote: statement },
-    { name: "a complete and an embedded occurrence", transcript: `Nadia: ${statement}\nNadia: The following sentence is false. ${statement}`, quote: statement },
     { name: "Dutch negation", transcript: "Nadia: Het is niet waar dat maaltijdcheques acht euro per dag bedragen.", quote: "maaltijdcheques acht euro per dag bedragen." },
     { name: "Dutch condition", transcript: "Nadia: Alleen als de overeenkomst getekend is, bedragen de maaltijdcheques acht euro per dag.", quote: "bedragen de maaltijdcheques acht euro per dag." },
-    { name: "a source turn longer than the claim limit", transcript: `Nadia: ${"Context about this agreement must be retained. ".repeat(6)}${statement}`, quote: statement },
+    { name: "a source turn longer than the selected quote", transcript: `Nadia: ${"Context about this agreement must be retained. ".repeat(6)}${statement}`, quote: statement },
   ];
 
   it.each(clipped)("rejects extraction that omits $name", async ({ transcript, quote }) => {
@@ -307,14 +307,14 @@ describe("complete source turn context", () => {
     const drafts = await extractClaimsFromTranscript(transcript, async () => JSON.stringify({
       claims: [{ text: quote, quote, topics: ["meal-vouchers"] }],
     }), PEOPLE);
-    expect(drafts[0].text).toBe(quote);
-    expect(drafts[0].quote).toBe(quote);
+    expect(drafts[0].text).toBe(normalizeTranscript(quote));
+    expect(drafts[0].quote).toBe(normalizeTranscript(quote));
 
     const input = liveHandover(quote, drafts[0].topics);
     input.document.content = transcript;
     input.claims[0].anchors = legalAnchorsForClaim(drafts[0], clientJurisdiction);
     addHandover(input);
-    expect(getClaim("ws-demo", input.claims[0].id)?.quote).toBe(quote);
+    expect(getClaim("ws-demo", input.claims[0].id)?.quote).toBe(normalizeTranscript(quote));
   });
 
   it("does not store an earlier valid claim when a later claim clips its context", () => {
@@ -371,13 +371,12 @@ describe("quoted-turn speaker binding", () => {
     expect((await extractClaimsFromTranscript(quote, async () => reply("Nadia"), PEOPLE))[0].speakerName).toBeUndefined();
   });
 
-  it.each(["Els", "Visitor"])("keeps the same quotation by Nadia and %s unassigned", async (other) => {
-    const drafts = await extractClaimsFromTranscript(`Nadia: ${quote}\n${other}: ${quote}`, async () => reply("Nadia"), PEOPLE);
-    expect(drafts[0].speakerName).toBeUndefined();
+  it.each(["Els", "Visitor"])("rejects the same quotation ambiguously attributed to Nadia and %s", async (other) => {
+    await expect(extractClaimsFromTranscript(`Nadia: ${quote}\n${other}: ${quote}`, async () => reply("Nadia"), PEOPLE)).rejects.toThrow("ambiguous");
   });
 
-  it("keeps a quote occurring before the labels and in a labeled turn unassigned", () => {
-    expect(resolveQuotedSpeaker(`${quote}\nNadia: ${quote}`, quote, PEOPLE)).toEqual({});
+  it("rejects a quote with both unlabeled and labeled occurrences", () => {
+    expect(() => resolveQuotedSpeaker(`${quote}\nNadia: ${quote}`, quote, PEOPLE)).toThrow("ambiguous");
   });
 
   it("allows repeated quotes from the same uniquely resolved speaker", () => {
@@ -387,7 +386,7 @@ describe("quoted-turn speaker binding", () => {
   it.each(["Nadia Haddad", "Nadia Other", "Nadia"])("does not assign ambiguous person records: %s", (name) => {
     const people = [...PEOPLE, { ...PEOPLE[0], id: "p-second-nadia", name }];
     const label = name === "Nadia Haddad" ? "Nadia Haddad" : "Nadia";
-    expect(resolveQuotedSpeaker(`${label}: ${quote}`, quote, people)).toEqual({});
+    expect(() => resolveQuotedSpeaker(`${label}: ${quote}`, quote, people)).toThrow("ambiguous");
   });
 
   it("binds a multiline continuation to the preceding speaker label", () => {
@@ -476,7 +475,7 @@ describe("process-local exact handover retries", () => {
   });
 
   it("sets the reservation before the generator itself can trigger a retry", async () => {
-    let nested!: Promise<void>;
+    let nested!: Promise<CaptureSummary>;
     const generate = vi.fn(async () => {
       nested = captureHandoverOnce(input, generate);
       return reply;
@@ -494,7 +493,11 @@ describe("process-local exact handover retries", () => {
     });
     const before = listClaims("ws-demo", "cl-janssens").length;
     const results = await Promise.allSettled([captureHandoverOnce(input, generate), captureHandoverOnce(input, generate)]);
-    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    if (failure === "speaker conflict") {
+      expect(results.every((result) => result.status === "fulfilled" && result.value.status === "rejected")).toBe(true);
+    } else {
+      expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    }
     expect(generate).toHaveBeenCalledTimes(1);
     expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(before);
     expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === input.transcript)).toBe(false);
@@ -565,20 +568,21 @@ describe("speaker fallback and reservation ownership", () => {
     claims: [{ text: quote, quote, topics: ["contact"], speakerName }],
   });
 
-  it.each([undefined, "Nadia"])("stores an ambiguous quoted turn without a speaker: %s", async (speakerName) => {
+  it.each([undefined, "Nadia"])("reports an ambiguous quoted turn without storing it: %s", async (speakerName) => {
     const transcript = `Nadia: ${quote}\nEls: ${quote}`;
-    await captureHandoverOnce({ ...input, transcript }, async () => reply(speakerName));
-    const document = listDocuments("ws-demo", "cl-janssens").find((d) => d.content === transcript)!;
-    const claim = listClaims("ws-demo", "cl-janssens").find((c) => c.sourceDocumentId === document.id)!;
-    expect(claim.speakerId).toBeUndefined();
+    const result = await captureHandoverOnce({ ...input, transcript }, async () => reply(speakerName));
+    expect(result).toMatchObject({ status: "rejected", acceptedCount: 0, rejectedCount: 1 });
+    expect(result.rejections[0].reason).toContain("ambiguous");
+    expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === transcript)).toBe(false);
   });
 
   it("does not choose between people sharing a source label", async () => {
     listPeople("ws-demo");
     globalThis.__relayStore!.people.push({ ...PEOPLE[0], id: "p-other-nadia", name: "Nadia Other" });
-    await captureHandoverOnce(input, async () => reply("Nadia Haddad"));
-    const document = listDocuments("ws-demo", "cl-janssens").find((d) => d.content === input.transcript)!;
-    expect(listClaims("ws-demo", "cl-janssens").find((c) => c.sourceDocumentId === document.id)?.speakerId).toBeUndefined();
+    const result = await captureHandoverOnce(input, async () => reply("Nadia Haddad"));
+    expect(result.status).toBe("rejected");
+    expect(result.rejections[0].reason).toContain("ambiguous");
+    expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === input.transcript)).toBe(false);
   });
 
   it("keeps an unlabeled quote unassigned despite a suggested model name", async () => {
@@ -594,7 +598,7 @@ describe("speaker fallback and reservation ownership", () => {
     await Promise.resolve();
     const pending = globalThis.__relayStore!.handoversInFlight!;
     const key = [...pending.keys()][0];
-    const successor = Promise.resolve();
+    const successor = Promise.resolve<CaptureSummary>({ status: "rejected", acceptedCount: 0, rejectedCount: 0, rejections: [], limitReached: false });
     pending.set(key, successor);
     reject(new Error("Synthetic failure of previous owner"));
     await expect(first).rejects.toThrow("previous owner");
@@ -603,7 +607,7 @@ describe("speaker fallback and reservation ownership", () => {
     expect(listDocuments("ws-demo", "cl-janssens").some((d) => d.content === input.transcript)).toBe(false);
   });
 
-  it("rejects a second claim with a wrong speaker without partial storage and permits retry", async () => {
+  it("stores only the valid set, reports a wrong speaker, and identifies a replay", async () => {
     const other = "The client asks to receive the invoice by email.";
     const transcript = `Nadia: ${quote}\nEls: ${other}`;
     const beforeDocuments = listDocuments("ws-demo", "cl-janssens").length;
@@ -614,13 +618,14 @@ describe("speaker fallback and reservation ownership", () => {
         { text: other, quote: other, topics: ["contact"], speakerName: "Nadia" },
       ],
     }));
-    await expect(captureHandoverOnce({ ...input, transcript }, generate)).rejects.toThrow("conflicts");
-    expect(listDocuments("ws-demo", "cl-janssens")).toHaveLength(beforeDocuments);
-    expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(beforeClaims);
-    generate.mockResolvedValue(reply("Nadia"));
-    await captureHandoverOnce({ ...input, transcript }, generate);
-    expect(generate).toHaveBeenCalledTimes(2);
+    const result = await captureHandoverOnce({ ...input, transcript }, generate);
+    expect(result).toMatchObject({ status: "captured", acceptedCount: 1, rejectedCount: 1 });
+    expect(result.rejections[0]).toMatchObject({ index: 1 });
+    expect(result.rejections[0].reason).toContain("conflicts");
     expect(listDocuments("ws-demo", "cl-janssens")).toHaveLength(beforeDocuments + 1);
     expect(listClaims("ws-demo", "cl-janssens")).toHaveLength(beforeClaims + 1);
+    expect(listClaims("ws-demo", "cl-janssens").some((claim) => claim.text === other)).toBe(false);
+    expect((await captureHandoverOnce({ ...input, transcript }, generate)).status).toBe("duplicate");
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,0 +1,52 @@
+{
+  "recordedAt": "2026-11-09T00:28:02.383245+00:00",
+  "applicationCommit": "41fa55ac7f33ba49e731212b6b1e8e2010da5bd7",
+  "upstreamBase": "2883e7c2b88e1d73f6f3e98db509f3945573fb15",
+  "retainedForkCommit": "75ff44e979eb123c0da1e519566a5d2d0d0af812",
+  "branch": "ceo/relay19-local-repair-20261109",
+  "node": "24.22.1",
+  "next": "16.4.5",
+  "unitTests": {
+    "status": "PASS",
+    "tests": 251,
+    "passed": 251,
+    "files": 21,
+    "startTimeUTC": "2026-11-09T00:25:13.714000+00:00",
+    "reportSha256": "1d4f188ffb85bc60cbcb6d371c2a7f8ce88dca6025e0f549896ae186f142bc96"
+  },
+  "typecheck": "PASS",
+  "lint": "PASS",
+  "productionBuild": "PASS",
+  "workflowYaml": "PARSED_DEPLOY_FALSE_FULL_HIGH_AUDIT",
+  "runtimeAudit": {
+    "exitCode": 0,
+    "vulnerabilityPackageEntries": 0
+  },
+  "fullAudit": {
+    "exitCode": 0,
+    "high": 0,
+    "critical": 0,
+    "moderatePackageEntries": 8
+  },
+  "http": {
+    "status": "PASS",
+    "checkedAt": "2026-11-09T00:24:14.559Z",
+    "checks": {
+      "anonymousRedirect": true,
+      "boardRendered": true,
+      "disabledCaptureRendered": true,
+      "humanReviewAndEphemeralNotices": true,
+      "existingClaimsRendered": true,
+      "briefRendered": true,
+      "otherWorkspaceDenied": true
+    },
+    "scope": "Local HTTP and server-rendered HTML only. No browser layout, hydration or live provider verification."
+  },
+  "visualBrowser": "NOT_VERIFIED",
+  "remoteCI": "NOT_RUN",
+  "newAikido": "NOT_RUN",
+  "remoteWrites": false,
+  "realTranscriptUse": false,
+  "liveModelCalls": false,
+  "securityHold": true
+}

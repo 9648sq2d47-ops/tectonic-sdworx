@@ -2,6 +2,45 @@
 
 Security is a graded part of this project. Keep these rules when contributing.
 
+## Current local repair boundary — 9 November 2026
+
+**SECURITY HOLD remains in force.** Local synthetic build/tests are authorized; live
+processing, remote publication, merge, deployment and external commitments are not.
+The current repair starts from upstream `2883e7c2b88e1d73f6f3e98db509f3945573fb15` and
+preserves the newer fork form fix `75ff44e979eb123c0da1e519566a5d2d0d0af812`.
+
+`RELAY_LIVE_AI_ENABLED` and `RELAY_LIVE_CAPTURE_ENABLED` default to false. Capture checks
+both on the server and uses only the configured selected provider. These flags are not
+proof of human authorization. Source matching is not a privacy filter: transcripts can
+contain personal data and must remain synthetic for this repair. No live provider call
+or real transcript is part of the verification.
+
+The local deployment job is unconditionally disabled and the full dependency audit again
+fails on high findings. This does not retrofit the remote repository. At the source
+review, upstream main reported `protected: false` and no repository rulesets. Aikido check
+results alone did not enforce the documented HOLD. The PR #19 merge automatically started
+[run 42533705135](https://github.com/lregaladohdez/tectonic-sdworx/actions/runs/42533705135);
+the deployment failed at Google authentication, before image build and revision deployment.
+Do not repair that credential configuration or rerun deployment as part of this task.
+
+### Storage and processing limits
+
+- All handover claims, reviews and duplicate markers are held in one Node process. They
+  are lost on restart, and are not shared by multiple instances. Use synthetic data in
+  one process only; no durable write, database transaction or distributed deduplication
+  is provided. A validated accepted batch is inserted synchronously within that process.
+  Capture can add documents, claims and review records beyond the seeded fixtures;
+  the store has no separate total-record ceiling or durable retention policy.
+- The same limit applies to the rate limiter, assessment cache and sign-out registry.
+  Signing out revokes the current session only where that revocation is held. Restarting
+  the server loses revocations; the signed token can remain valid until its eight-hour
+  expiry. This is not production authentication or a durable audit record.
+- Provider processing and retention, lawful use of transcripts, user information,
+  access, deletion and operational ownership need separate agreement before live use.
+  An API `store: false` parameter, if used, does not establish zero provider retention.
+- Separate Remotion video tooling writes local MP4 files under `out/` without an automatic
+  cleanup schedule. It is not exercised by this capture repair.
+
 ## Threat model in one paragraph
 
 Relay holds client payroll knowledge for a team of consultants. The assets are the
@@ -24,32 +63,34 @@ acting as a signed-in user. Everything below exists to close those three.
 | Generated audio is streamed back to the caller, never written under `public/` | `src/app/api/tts/route.ts` |
 | Security headers: per-request CSP with a script nonce and `strict-dynamic` (no `unsafe-inline` for scripts), HSTS (2 years, production only), `X-Frame-Options: DENY`, `nosniff`, referrer and permissions policy, no `X-Powered-By` | `src/proxy.ts`, `next.config.ts` |
 | Errors: `AccessError` maps to 401/404, anything else is logged server-side and answered with a generic 500 | `src/lib/http/guards.ts` |
-| Dependencies: Aikido GitHub App check on every PR, `npm audit --audit-level=high` in the pipeline, Dependabot weekly; deploys only run after the pipeline passes | `.github/workflows/pipeline.yml` |
+| Dependencies: full and runtime `npm audit --audit-level=high` gates; Aikido reports its own check; deployment is disabled in this local repair | `.github/workflows/pipeline.yml` |
 
-Verified by hand with curl on 2026-09-30: unauthenticated board → 307 to login; cross-origin
+Historically reported manual checks on 2026-09-30 (not repeated merely by reading this file): unauthenticated board → 307 to login; cross-origin
 login → 401; wrong passcode → 401; member reading another workspace → 404; review on another
 workspace's claim → 404; review naming a person from another workspace → 404; sixth failed
 login in a minute → 429. Unit tests cover the session token, the scoped store and the
 consolidation logic (`npm test`).
 
-## Known gaps (hackathon scope)
+## Historical hackathon gaps (not acceptance of production risk)
 
 - Single shared passcode for the demo users instead of per-user credentials or SSO.
-- In-memory store, rate limiter and sign-out list: one process, state resets on restart. On
-  Cloud Run each instance keeps its own counters, so with `--max-instances=3` the effective
-  login limit is up to 15 attempts per IP per minute, still far too slow for guessing a random
-  passcode, and a signed-out token is only refused by the instance that saw the sign-out (it
-  expires everywhere within 8 h).
-- The Cloud Run demo is reachable by anyone (`allUsers` invoker); the app's own login is the
-  only gate.
+- In-memory store, rate limiter and sign-out list: one process, state resets on restart.
+  Multiple Cloud Run instances do not share counters or sign-out records; their presence
+  does not provide an aggregate rate limit or reliable global session revocation.
+- Historical deployment notes describe an `allUsers` invoker. The current live service's
+  IAM and exposure were not rechecked in this local repair.
 - The Remotion render route writes MP4 files to the server's `out/` directory; they are not
   served, but they are not cleaned up either.
 - `style-src` allows `'unsafe-inline'`: React `style={{...}}` attributes (the score bars on the
   claim cards, the Remotion player) cannot carry a nonce, and without `unsafe-inline` the browser
-  drops them. With scripts locked to a nonce, injected CSS cannot run code or read data, so this is
-  accepted. `script-src` is nonce-based, see the hardening pass below.
+  drops them. The script nonce does not prove that all CSS injection or information-leak
+  risks are absent. This remains a documented styling tradeoff, not a security guarantee.
 
-## Hardening pass before the Aikido audit (30 Sep 2026)
+## Historical hardening report (30 Sep 2026; not current acceptance)
+
+The following sections preserve earlier reported work. They do not mean the checks were
+rerun on the current repair or that the live deployment is still in the same state. The
+current limits above and the separate local repair record take precedence.
 
 A second pass on branch `feat/security-hardening`, done the way the AI Code Audit reasons:
 authentication, authorisation, injection, headers, secrets, dependencies, error handling.
@@ -100,7 +141,7 @@ Chrome run against a production build (`next build && next start`).
   `voiceOver` <= 64 characters. Verified: 500-character title -> 400.
 - **Logout cookie lacked `Secure`** in production; added for symmetry with login.
 
-### Checked and found fine
+### Checks reported at that time
 
 - Session token: HMAC-SHA256 over the payload, `timingSafeEqual` on the signature, expiry
   enforced server-side, tampered payload and wrong secret rejected (tests in `session.test.ts`).
@@ -118,10 +159,10 @@ Chrome run against a production build (`next build && next start`).
   (`../../etc/passwd` -> 400). Nothing is written under `public/` at request time.
 - Shell and path injection: Remotion renders through headless Chrome, no shell; inputs only reach
   React props.
-- LLM prompts: the only user-controlled text that reaches a prompt is the 500-character
-  `topic` of `/api/script`; signal prompts are built from seeded documents and claims. LLM output is
-  parsed with zod (`generateJson`) or truncated to one line, and is never used as a path, URL or
-  command; the only links rendered come from the static regulation feed.
+- LLM prompts were described as limited to the script topic and seeded signal input.
+  That scope is superseded: capture can introduce user-authored transcript data and
+  claims. The repaired assessment prompts separate data from instructions and check
+  evidence coverage, but do not guarantee resistance to every prompt injection.
 - No `dangerouslySetInnerHTML`; React escapes every value rendered.
 - Open redirects: the post-login destination is the workspace id returned by the server, never a
   query parameter.
@@ -131,13 +172,17 @@ Chrome run against a production build (`next build && next start`).
   schema in server-only modules.
 - Container: runs as `node`, no secrets in the image; Cloud Run secrets come from Secret Manager.
 - Pipeline: `permissions: contents: read`, keyless Workload Identity Federation, no stored keys.
-- Logging: only provider error messages (truncated) and signal names are logged; no tokens, no PII.
+- Logging previously retained truncated provider exceptions; truncation does not establish
+  absence of personal data. The repaired capture, document-evidence and regulation-watch
+  paths use fixed error categories. This is not a guarantee about every unrelated tool.
 - Caching: authenticated pages are served with `Cache-Control: private, no-cache, no-store`; TTS
   audio with `private, no-store`.
-- Memory growth: the assessment cache and the review map are keyed by records that must exist in
-  the caller's workspace, so they are bounded by the seeded data.
+- Assessment-cache keys are limited by the current workspace/client set. Captured records
+  and their reviews can grow beyond the initial fixtures; see the current storage limits.
 - Methods: every API route exports only `POST`.
-- `npm audit --audit-level=high` and `--audit-level=moderate`: clean.
+- The original report described clean audits. The 9 November local audit instead reports
+  zero runtime findings and eight moderate full-audit package entries, with no high or
+  critical findings. A successful high-threshold gate is not an all-severity clean audit.
 
 ### Deliberately left alone
 
@@ -168,7 +213,11 @@ the fixed commit and that screenshot is saved as `docs/aikido/after.png`. Both a
 hand and committed before the Builderbase form is submitted; the step-by-step instructions
 are in [docs/aikido/README.md](docs/aikido/README.md).
 
-## Dependency overrides
+## Historical dependency override rationale
+
+The table below records earlier choices. For this repair, the source of installed versions
+is the unchanged `package-lock.json` at the merged baseline (Next 16.4.5). Do not remove
+overrides or apply the historical date-based update advice without a new dependency review.
 
 `package.json` carries `overrides` that pin transitive packages to patched releases:
 

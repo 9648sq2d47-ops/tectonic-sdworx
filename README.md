@@ -6,6 +6,25 @@
 Built for the SD Worx track of the Tectonic Hackathon (30 Sep 2026): *"Find it. Understand
 it. Trust it."* **Relay verifies the handover, not the search.**
 
+## Local repair status — 9 November 2026
+
+This working version is a **local, synthetic review candidate under SECURITY HOLD**.
+It starts from upstream merge `2883e7c2b88e1d73f6f3e98db509f3945573fb15` and retains the
+later fork correction `75ff44e979eb123c0da1e519566a5d2d0d0af812`. Local build permission
+does not authorize a remote PR, merge, deployment, real transcript or provider call.
+
+Live LLM use and live capture are off by default, even when credentials are present.
+The deployment job in this repair is unconditionally disabled. These are local code
+changes; they do not change the currently published upstream workflow or running service.
+Human review remains necessary: a source match or model verdict is not an independent
+confirmation of meaning, legal correctness, identity or consent.
+
+Claims, reviews, duplicate detection, rate limits, assessment cache and session revocations
+are process-local demo state. Use one Node process for a synthetic demonstration. Restarting
+it loses new claims and reviews; parallel instances do not share state. No durable storage
+or production use is claimed. Video tooling separately writes files under `out/`; this
+repair does not make those files durable, backed up, or automatically deleted.
+
 When a payroll consultant inherits a client, the handover is one document and one
 conversation. Some of what they hear is tacit, some is outdated, some is wrong, and they
 cannot tell which until a payslip fails. Relay turns the handover into a list of **claims**,
@@ -14,7 +33,7 @@ board** where each statement carries its verdict, the verbatim evidence behind i
 human action it needs. Nothing is hidden behind a black box: every verdict links to a
 passage, a regulation or a person. Accepted claims become the **verified client brief**.
 
-## Submission
+## Historical submission references
 
 | What | Where |
 | --- | --- |
@@ -48,12 +67,12 @@ knowledge source. Each client has its own planted story; the bakery, in detail:
 | Owner prefers WhatsApp                        | **Unsupported**: tacit knowledge; route it to Nadia, who said it                                                                   |
 | 13th month in December, JC 118, holiday in May | **Confirmed**, with the exact passage                                                                                             |
 
-Those are the verdicts of the deterministic judge (`npm run relay:board`). With an LLM
-key the evidence judge reads the passages instead of matching values, and it is stricter:
-the "shop staff under JC 118" claim becomes *unsupported* because the client file only
-names blue-collar and office staff, and the indexation claim becomes *confirmed* because
-regulation watch judges the FPS fiche as supporting it. Both readings are shown with their
-reasoning, which is the point.
+Those describe the original fixture demonstration, not the acceptance results of this
+repair. The revised deterministic judge keeps incomplete support open for human review.
+With separately authorized and explicitly enabled LLM processing, the evidence judge
+can propose an interpretation of passages. A positive model answer still needs source
+coverage: a notice about January 2026 does not establish a rule for every January.
+Missing coverage stays open for human review. The local checks do not establish legal truth.
 
 Garage Willems: the eco-cheque amount rests on an email from 2022, the company-car claim
 contradicts the client file while the car policy was revised in 2026, and an overtime rule
@@ -67,11 +86,11 @@ proposed expert; the brief page collects the accepted claims.
 
 ## How it works
 
-```
-handover transcript ──▶ claims ──▶ [ signal, signal, signal, signal ] ──▶ consolidate ──▶ claim board ──▶ review ──▶ brief
-                                       run in parallel, each returns              precedence: contradicted > outdated >
-                                       verdict + confidence + evidence            expiring > unsupported > confirmed
-```
+Each captured claim is evaluated by the registered signals in parallel. Their evidence
+and verdicts are consolidated for the board before a human review can add a claim to the
+brief. The current verdict precedence is contradicted, outdated, expiring, confirmed,
+then unsupported; absent signal evidence remains unknown. These are application labels,
+not independent human approval.
 
 The kernel (`src/relay`) knows nothing about payroll: types, a registry, a scoped store,
 consolidation and the seeded fixtures. Signals are plugins under `src/relay/signals/*`.
@@ -79,7 +98,7 @@ Adding one is one folder and one import; see [docs/signals.md](docs/signals.md).
 
 | Signal             | Category | What it does                                                                                                                                                                              |
 |--------------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Document evidence  | trust    | Retrieves the relevant passages and judges confirm / contradict / unsupported. LLM when a key is present, deterministic value matching otherwise; the evidence stays visible either way |
+| Document evidence  | trust    | Retrieves relevant passages and reports confirm / contradict / unsupported. Live LLM only when explicitly enabled and configured; deterministic evaluation otherwise. Incomplete support stays open for human review. |
 | Document freshness | detect   | Deterministic, no model. Superseded, revised or old evidence → outdated / expiring                                                                                                        |
 | Regulation watch   | detect   | Matches each claim's legal anchor (topic, country, joint committee) against a curated feed of real 2026 Belgian changes with official sources; an LLM judges whether the change contradicts or supports the claim |
 | Expert locator     | connect  | Scores people by topic, document ownership, jurisdiction and authorship; proposes who to ask                                                                                              |
@@ -98,19 +117,27 @@ Sign in as `incoming@relay.demo` (Jonas) with the passcode from `.env.local`. Ot
 users: `nadia@relay.demo` (same workspace) and `outsider@relay.demo` (another workspace, to
 see the scoping in action).
 
-**Providers are optional.** Without any key the signals run in deterministic mode and the
-demo works end to end; the board header says *offline*. With `OPENAI_API_KEY`, or a Gemini
-key (`GOOGLE_API_KEY`) or a Google Cloud project (`GOOGLE_CLOUD_PROJECT`), the evidence
-judge, the regulation summaries and the expert questions use the LLM. `LLM_PROVIDER` picks
-which one is tried first; if a provider refuses (for example a Vertex model policy) the
-client falls back to the other one. A live board takes about 6 to 9 seconds and is cached
-per process for five minutes. `ELEVENLABS_API_KEY` is only needed for the voice tooling.
+**Synthetic mode is the default.** Keep `RELAY_LIVE_AI_ENABLED=false` and
+`RELAY_LIVE_CAPTURE_ENABLED=false` while SECURITY HOLD applies. Credentials alone do not
+enable LLM requests. After a separate processing approval, enabling the first flag would
+permit configured signal providers; enabling capture additionally requires the second
+flag and credentials for the exact `LLM_PROVIDER`. Capture never switches providers as a
+fallback. The existing signal-provider fallback is distinct and needs to be considered
+in any later processing approval. These switches do not authenticate a CEO decision.
+
+The capture form explains availability and ephemeral demo storage. Expected errors retain
+the entered transcript. Accepted and rejected claims are reported separately; no accepted
+claim is written until the accepted set has passed source checks. The extraction limit is
+five claims per capture, with complete quoted turns up to 1,000 characters. These are
+bounded demo limits, not evidence that a long transcript has been completely extracted.
+`ELEVENLABS_API_KEY` belongs to the separate voice tooling, which is outside this capture
+repair and is not authorized for use by this local build.
 
 ```bash
-npm test                        # 59 unit tests: kernel, consolidation, scoped store, session, all four signals
+npm test                        # current synthetic/mocked regression suite
 npm run relay:board             # prints the consolidated board with the deterministic judge
 npm run relay:board -- --all    # every client; --client <id> for one
-npm run relay:board -- --live   # same, with the providers from .env.local
+# --live is outside the current SECURITY HOLD scope; do not run it for this repair.
 npm run typecheck && npm run lint && npm run build
 ```
 
@@ -149,27 +176,33 @@ cookie with constant-time verification, seeded users behind a passcode with logi
 limiting, every store read scoped by workspace id (a record from another workspace is *not
 found*, even with its id), same-origin checks on mutations, zod on every input, provider
 keys in server-only modules loaded through a validated env schema, CSP and the usual
-headers. The Aikido GitHub App checks every PR and blocks on HIGH+ findings, the pipeline
-runs `npm audit` and only deploys when the tests pass, and Dependabot keeps dependencies
-fresh. The controls, how they were verified, and the known gaps are in
+headers. The connected Aikido GitHub App reports a PR check; repository rules are also
+needed to enforce it. Green tests do not grant permission to merge or deploy. This local
+pipeline runs full and runtime dependency audits at the high threshold and disables its
+deployment job. The controls, historical checks and known gaps are in
 [SECURITY.md](SECURITY.md).
 
 To activate Aikido on a fresh fork: connect the repo at app.aikido.dev (this installs the
 PR check App). Do not add Aikido's GitHub Action on top; Aikido rejects it on a repo the App
 already protects.
 
-## Deploy (Google Cloud Run)
+## Historical deployment setup (not authorized by this repair)
 
-Current deployment: <https://tectonic-sdworx-970554784378.europe-west1.run.app>
+Previously recorded service URL: <https://tectonic-sdworx-970554784378.europe-west1.run.app>.
+The live service and its current data were not verified for this repair.
 
 The app ships as one container ([Dockerfile](Dockerfile)) that runs `next start` and can
-render videos server-side with Remotion's headless Chrome. Every push to `main` runs
-[pipeline.yml](.github/workflows/pipeline.yml): tests, then a Cloud Build and a Cloud Run
-deploy in `europe-west1` through keyless Workload Identity Federation
+render videos server-side with Remotion's headless Chrome. The historical workflow ran
+tests followed by an automatic Cloud Build / Cloud Run deployment on pushes to `main`.
+The merge of PR #19 triggered that job; its Google authentication failed before image
+build or revision deployment. See [the run](https://github.com/lregaladohdez/tectonic-sdworx/actions/runs/42533705135).
+The local repair disables deployment for every event, including manual dispatch. The
+commands below document the old setup, not a next action while SECURITY HOLD applies.
+That setup used keyless Workload Identity Federation
 (`scripts/gcp/setup-github-deploy.sh` creates the pool, provider and service account once),
 then a smoke test of `/` and `/login`.
 
-To do the same by hand:
+Historical manual commands (do not execute under this repair authorization):
 
 ```bash
 PROJECT=qwiklabs-gcp-02-8ec6a39cdba0
@@ -246,13 +279,19 @@ The submission video is scripted in [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md)
 
 ## Unfinished, on purpose
 
-- Claims are seeded, not extracted live: the transcript-to-claims step is a prompt away
-  but is not wired to an upload yet.
+- Claims begin with synthetic fixtures. The capture flow is implemented and tested with
+  stubs, but live capture is disabled and real client transcripts are not authorized.
+- Speaker parsing and legal-topic recognition use limited text grammars. They do not
+  prove identity, complete extraction or legal meaning. At most five claims are retained
+  per capture; a complete quoted turn is limited to 1,000 characters.
+- Exact retries use workspace, client, date and normalized transcript. After a partial
+  capture, an identical retry is a duplicate; it does not reprocess rejected rows. A
+  separate correction/reprocessing workflow has not been added.
 - No Teams, SharePoint or HR-system connectors; the sixteen documents are seeded.
 - The regulation feed is curated by hand from official pages, not pulled live.
 - Single shared demo passcode instead of per-user credentials or SSO.
-- In-memory store and rate limiter: reviews reset when the server restarts, and it is one
-  process.
+- In-memory claims, reviews, rate limits, cache and sign-out records reset when the server
+  restarts. This is one process, with no database, backup or global revocation.
 - The Remotion briefing exists as a composition but is not generated from the verified
   brief yet.
 - Rendered videos are written to the container's ephemeral disk and are not downloadable.

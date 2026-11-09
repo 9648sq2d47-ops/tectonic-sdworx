@@ -1,0 +1,18 @@
+{
+  "status": "NOT_VERIFIED",
+  "attempts": [
+    {
+      "method": "local Chromium / Playwright",
+      "result": "BLOCKED_AT_LAUNCH",
+      "error": "process_singleton socket() failed: Operation not permitted"
+    },
+    {
+      "method": "shared cloud browser",
+      "result": "CONNECTION_REFUSED",
+      "error": "net::ERR_CONNECTION_REFUSED to local testserver"
+    }
+  ],
+  "screenshotsCreated": false,
+  "responsiveLayoutVerified": false,
+  "serverRenderedHtmlVerifiedSeparately": true
+}

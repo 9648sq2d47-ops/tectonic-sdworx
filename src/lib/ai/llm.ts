@@ -7,9 +7,49 @@ import { openai, generateText as generateWithOpenAI } from "./openai";
 
 type Provider = "google" | "openai";
 
+export type CaptureAvailability = {
+  available: boolean;
+  provider: Provider;
+  providerLabel: string;
+  reason: "DISABLED" | "PROVIDER_UNAVAILABLE" | null;
+  message: string;
+};
+
+/** Credentials alone never enable live calls in this synthetic demonstration. */
+export function captureAvailability(): CaptureAvailability {
+  const e = env();
+  const provider = e.LLM_PROVIDER;
+  const providerLabel = provider === "google" ? "Google Gemini" : "OpenAI";
+  if (!e.RELAY_LIVE_AI_ENABLED || !e.RELAY_LIVE_CAPTURE_ENABLED) {
+    return {
+      available: false, provider, providerLabel, reason: "DISABLED",
+      message: "Live capture is disabled for this synthetic demo. Existing claims and the client brief remain available.",
+    };
+  }
+  const hasSelectedProvider = provider === "google"
+    ? Boolean(e.GOOGLE_CLOUD_PROJECT || e.GOOGLE_API_KEY)
+    : Boolean(e.OPENAI_API_KEY);
+  return hasSelectedProvider
+    ? { available: true, provider, providerLabel, reason: null, message: "" }
+    : {
+      available: false, provider, providerLabel, reason: "PROVIDER_UNAVAILABLE",
+      message: `${providerLabel}, the selected capture provider, is not configured. Existing claims and the client brief remain available.`,
+    };
+}
+
+/** Recheck the server gate immediately before calling the selected provider. No fallback. */
+export async function generateCaptureText(prompt: string, system?: string): Promise<string> {
+  const availability = captureAvailability();
+  if (!availability.available) throw new Error("Live capture is unavailable.");
+  return availability.provider === "google"
+    ? generateTextWithGemini(prompt, system)
+    : generateWithOpenAI(prompt, system);
+}
+
 const configured = (): Provider[] => {
   const e = env();
   const list: Provider[] = [];
+  if (!e.RELAY_LIVE_AI_ENABLED) return list;
   const hasGoogle = Boolean(e.GOOGLE_CLOUD_PROJECT || e.GOOGLE_API_KEY);
   const hasOpenAI = Boolean(e.OPENAI_API_KEY);
   // Preferred provider first (LLM_PROVIDER), then whatever else is configured as fallback.
@@ -21,7 +61,7 @@ const configured = (): Provider[] => {
   return list;
 };
 
-/** True when at least one text provider is configured. */
+/** True only when live AI is explicitly enabled and a text provider is configured. */
 export function llmAvailable(): boolean {
   return configured().length > 0;
 }
@@ -43,7 +83,7 @@ function warnOnce(key: string, message: string) {
 async function withFallback<T>(what: string, fn: (p: Provider) => Promise<T>): Promise<T> {
   const providers = configured();
   if (providers.length === 0) {
-    throw new Error("No LLM configured. Set GOOGLE_CLOUD_PROJECT, GOOGLE_API_KEY or OPENAI_API_KEY.");
+    throw new Error("Live AI is disabled or no provider is configured.");
   }
   let lastError: unknown;
   for (const p of providers) {
@@ -51,8 +91,8 @@ async function withFallback<T>(what: string, fn: (p: Provider) => Promise<T>): P
       return await fn(p);
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      warnOnce(`${what}:${p}`, `${what} via ${p} failed, trying next provider: ${message.slice(0, 160)}`);
+      // Provider errors can contain request contents or credentials; do not log them.
+      warnOnce(`${what}:${p}`, `${what} via ${p} failed; trying another configured provider if available.`);
     }
   }
   throw lastError;

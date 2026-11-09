@@ -1,0 +1,9 @@
+▲ Next.js 16.4.5
+- Local:         http://127.0.0.1:3420
+- Network:       http://127.0.0.1:3420
+✓ Ready in 108ms
+✓ Running next.config.ts took 30ms
+[relay] regulation-watch: model judgement unavailable for c2
+[relay] regulation-watch: model judgement unavailable for c6
+[relay] regulation-watch: model judgement unavailable for c8
+[relay] document-evidence: LLM judgement unavailable (Provider judgement unavailable or invalid); deterministic judge used for c1, c2, c3, c4, c5, c6, c7, c8

@@ -47,6 +47,9 @@ export function ClaimCard({ workspaceId, claim, trust, review, documents, people
                 <span className="text-slate">confidence {Math.round(r.confidence * 100)}%</span>
               </div>
               <p className="mt-1.5 text-sm text-body">{r.summary}</p>
+              {r.details?.semanticVerification === "PENDING_HUMAN_REVIEW" ? (
+                <p className="mt-1.5 text-sm font-medium text-warning">Meaning and applicability need human review.</p>
+              ) : null}
               {r.evidence.length > 0 ? (
                 <ul className="mt-2 flex flex-col gap-1.5">
                   {r.evidence.map((e, i) => {

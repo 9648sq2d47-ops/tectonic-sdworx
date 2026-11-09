@@ -1,44 +1,23 @@
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
-import { requireWorkspaceMember, requireWorkspacePage } from "@/lib/auth/access";
-import { generateText } from "@/lib/ai/openai";
-import { env } from "@/lib/env";
-import { rateLimit } from "@/lib/rate-limit";
+import { requireWorkspacePage } from "@/lib/auth/access";
+import { captureAvailability } from "@/lib/ai/llm";
 import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
-import { assessClientCached, invalidateAssessmentCache, llmMode } from "@/relay/assess-cached";
-import { captureHandoverOnce, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
+import { assessClientCached, llmMode } from "@/relay/assess-cached";
+import { getClient, getReview, listDocuments, listPeople } from "@/relay/store";
 import { VERDICTS } from "@/relay/types";
+import { HandoverForm } from "./HandoverForm";
 
 export const dynamic = "force-dynamic";
-
-async function captureHandover(formData: FormData) {
-  "use server";
-  const workspaceId = String(formData.get("workspaceId") ?? "");
-  const clientId = String(formData.get("clientId") ?? "");
-  const transcript = String(formData.get("transcript") ?? "").trim();
-  const saidAt = String(formData.get("saidAt") ?? "").trim();
-
-  const { user } = await requireWorkspaceMember(workspaceId);
-  const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
-  if (!limit.ok) throw new Error("Too many handover extraction attempts");
-  const client = getClient(workspaceId, clientId);
-  if (!client) throw new Error("Client not found");
-  if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
-  if (!env().OPENAI_API_KEY) throw new Error("OpenAI is not configured");
-
-  await captureHandoverOnce({ workspaceId, clientId, transcript, saidAt }, generateText);
-  invalidateAssessmentCache(workspaceId, clientId);
-  revalidatePath(`/w/${workspaceId}/clients/${clientId}`);
-}
 
 export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspaceId]/clients/[clientId]">) {
   const { workspaceId, clientId } = await params;
   const { user, workspace } = await requireWorkspacePage(workspaceId);
   const client = getClient(workspaceId, clientId);
   if (!client) notFound();
+  const availability = captureAvailability();
 
   const { claims, trust, errors } = await assessClientCached(workspaceId, clientId);
   const documents = new Map(listDocuments(workspaceId).map((d) => [d.id, d]));
@@ -57,7 +36,7 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
           </p>
           <h1 className="text-2xl font-semibold text-ink">Claim board</h1>
           <p className="mt-1 text-sm text-body">
-            Every statement from the handover, with its evidence and status. Signals run in {llmMode()} mode.
+            Captured statements from the handover, with their evidence and status. Signals run in {llmMode()} mode.
           </p>
         </div>
         <Link
@@ -69,38 +48,15 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
       </div>
 
       <section className="rounded-lg border border-line bg-surface p-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Live handover</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Synthetic handover demo</p>
         <h2 className="mt-1 text-lg font-semibold text-ink">Turn a handover into bounded claims</h2>
         <p className="mt-1 text-sm text-body">
-          OpenAI extracts explicit statements only. Every created claim must retain an exact source quote before Relay verifies it.
+          When enabled, {availability.providerLabel} proposes claims linked to exact source quotes. A quote match does not establish that a claim is true; human review is still required.
         </p>
-        <form action={captureHandover} className="mt-4 flex flex-col gap-3">
-          <input type="hidden" name="workspaceId" value={workspaceId} />
-          <input type="hidden" name="clientId" value={clientId} />
-          <label className="flex max-w-xs flex-col gap-1 text-sm text-body">
-            Handover date
-            <input
-              type="date"
-              name="saidAt"
-              required
-              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
-            />
-          </label>
-          <textarea
-            name="transcript"
-            minLength={40}
-            maxLength={8000}
-            rows={6}
-            required
-            placeholder={"Nadia: Meal vouchers are seven euro face value, one per day worked.\nNadia: Sunday work gets a fifty percent premium."}
-            className="w-full rounded-md border border-line bg-surface p-3 text-sm text-ink outline-none focus:border-brand"
-          />
-          <div>
-            <button type="submit" className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-400">
-              Extract claims with OpenAI
-            </button>
-          </div>
-        </form>
+        <p id="handover-demo-notice" className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-body">
+          Synthetic data only: do not enter real client information. This single-instance demo keeps claims, reviews and rate limits in server memory; they reset on restart and are not shared between instances.
+        </p>
+        <HandoverForm workspaceId={workspaceId} clientId={clientId} availability={availability} />
       </section>
 
       <dl className="grid grid-cols-3 gap-3 sm:grid-cols-6">
