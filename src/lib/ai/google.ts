@@ -9,6 +9,7 @@ let client: GoogleGenAI | undefined;
  * GOOGLE_CLOUD_PROJECT is set, otherwise the Gemini API key.
  */
 export function google(): GoogleGenAI {
+  if (!env().RELAY_LIVE_AI_ENABLED) throw new Error("Live AI is disabled.");
   if (client) return client;
   const { GOOGLE_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION } = env();
 

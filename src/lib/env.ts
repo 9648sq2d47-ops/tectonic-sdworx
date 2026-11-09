@@ -1,12 +1,16 @@
 import { z } from "zod";
 
 const optional = z.string().trim().min(1).optional();
+const optIn = z.enum(["true", "false"]).default("false").transform(value => value === "true");
 
 const schema = z.object({
   OPENAI_API_KEY: optional,
   OPENAI_MODEL: z.string().default("gpt-5.5"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-large"),
-  /** Which provider to try first for signals; the other is the fallback. */
+  /** Local technical gates, not approval to send real data to a provider. */
+  RELAY_LIVE_AI_ENABLED: optIn,
+  RELAY_LIVE_CAPTURE_ENABLED: optIn,
+  /** Selected capture provider; signals retain their explicitly enabled fallback. */
   LLM_PROVIDER: z.enum(["google", "openai"]).default("google"),
 
   ELEVENLABS_API_KEY: optional,
