@@ -1,20 +1,48 @@
 import Link from "next/link";
+import { refresh, revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
-import { requireWorkspacePage } from "@/lib/auth/access";
+import { requireWorkspaceMember, requireWorkspacePage } from "@/lib/auth/access";
+import { generateText } from "@/lib/ai/openai";
+import { env } from "@/lib/env";
+import { rateLimit } from "@/lib/rate-limit";
 import { ClaimCard } from "@/components/relay/ClaimCard";
 import { Shell } from "@/components/relay/Shell";
 import { VERDICT_TONE } from "@/components/relay/StatusBadge";
-import { assessClientCached, llmMode } from "@/relay/assess-cached";
-import { getClient, getReview, listDocuments, listPeople } from "@/relay/store";
+import { assessClientCached, invalidateAssessmentCache, llmMode } from "@/relay/assess-cached";
+import { captureHandoverOnce, getClient, getReview, listDocuments, listPeople } from "@/relay/store";
 import { VERDICTS } from "@/relay/types";
 
 export const dynamic = "force-dynamic";
+
+async function captureHandover(formData: FormData) {
+  "use server";
+  const workspaceId = String(formData.get("workspaceId") ?? "");
+  const clientId = String(formData.get("clientId") ?? "");
+  const transcript = String(formData.get("transcript") ?? "").trim();
+  const saidAt = String(formData.get("saidAt") ?? "").trim();
+
+  const { user } = await requireWorkspaceMember(workspaceId);
+  const limit = rateLimit(`handover-extract:${user.id}`, 5, 60_000);
+  if (!limit.ok) throw new Error("Too many handover extraction attempts");
+  const client = getClient(workspaceId, clientId);
+  if (!client) throw new Error("Client not found");
+  if (transcript.length < 40 || transcript.length > 8000) throw new Error("Invalid transcript length");
+  if (!env().OPENAI_API_KEY) {
+    refresh();
+    return;
+  }
+
+  await captureHandoverOnce({ workspaceId, clientId, transcript, saidAt }, generateText);
+  invalidateAssessmentCache(workspaceId, clientId);
+  revalidatePath(`/w/${workspaceId}/clients/${clientId}`);
+}
 
 export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspaceId]/clients/[clientId]">) {
   const { workspaceId, clientId } = await params;
   const { user, workspace } = await requireWorkspacePage(workspaceId);
   const client = getClient(workspaceId, clientId);
   if (!client) notFound();
+  const canExtractHandover = Boolean(env().OPENAI_API_KEY);
 
   const { claims, trust, errors } = await assessClientCached(workspaceId, clientId);
   const documents = new Map(listDocuments(workspaceId).map((d) => [d.id, d]));
@@ -43,6 +71,48 @@ export default async function ClaimBoardPage({ params }: PageProps<"/w/[workspac
           Verified client brief
         </Link>
       </div>
+
+      <section className="rounded-lg border border-line bg-surface p-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-brand">Live handover</p>
+        <h2 className="mt-1 text-lg font-semibold text-ink">Turn a handover into bounded claims</h2>
+        <p className="mt-1 text-sm text-body">
+          OpenAI extracts explicit statements only. Every created claim must retain an exact source quote before Relay verifies it.
+        </p>
+        {!canExtractHandover ? (
+          <p id="handover-unavailable" role="status" className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-body">
+            OpenAI is not configured. You can still review existing claims and use the verified client brief.
+          </p>
+        ) : null}
+        <form action={captureHandover} aria-describedby={!canExtractHandover ? "handover-unavailable" : undefined} className="mt-4 flex flex-col gap-3">
+          <input type="hidden" name="workspaceId" value={workspaceId} />
+          <input type="hidden" name="clientId" value={clientId} />
+          <label className="flex max-w-xs flex-col gap-1 text-sm text-body">
+            Handover date
+            <input
+              type="date"
+              name="saidAt"
+              required
+              disabled={!canExtractHandover}
+              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+          </label>
+          <textarea
+            name="transcript"
+            minLength={40}
+            maxLength={8000}
+            rows={6}
+            required
+            disabled={!canExtractHandover}
+            placeholder={"Nadia: Meal vouchers are seven euro face value, one per day worked.\nNadia: Sunday work gets a fifty percent premium."}
+            className="w-full rounded-md border border-line bg-surface p-3 text-sm text-ink outline-none focus:border-brand"
+          />
+          <div>
+            <button type="submit" disabled={!canExtractHandover} className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-400 disabled:cursor-not-allowed disabled:opacity-60">
+              Extract claims with OpenAI
+            </button>
+          </div>
+        </form>
+      </section>
 
       <dl className="grid grid-cols-3 gap-3 sm:grid-cols-6">
         {(

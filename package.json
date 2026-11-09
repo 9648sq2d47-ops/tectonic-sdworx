@@ -31,7 +31,7 @@
     "@remotion/player": "^4.0.519",
     "@remotion/renderer": "^4.0.519",
     "@remotion/tailwind-v4": "^4.0.519",
-    "next": "16.3.8",
+    "next": "16.4.5",
     "openai": "^7.8.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -45,17 +45,17 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.8",
+    "eslint-config-next": "16.4.5",
     "playwright-core": "^1.62.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "brace-expansion@1": "1.1.21",
     "brace-expansion@5": "5.0.12",
-    "fast-uri@3": "3.1.8",
+    "fast-uri@3": "3.1.9",
     "ws@8": "8.21.3",
     "protobufjs@7": "8.8.0",
     "zod": "$zod"
