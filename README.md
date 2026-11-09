@@ -1,8 +1,10 @@
 # Tectonic × SD Worx
 
-[![Aikido Security](https://app.aikido.dev/assets/badges/label-only-light-theme.svg)](https://app.aikido.dev)
-[![Aikido scan](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/aikido.yml/badge.svg)](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/aikido.yml)
-[![CI](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/ci.yml/badge.svg)](https://github.com/lregaladohdez/tectonic-sdworx/actions/workflows/ci.yml)
+> **Source scope, checked 20 October 2026:** this fork's code is the earlier
+> video-generator baseline `f77a919`. The later Relay client-handover prototype
+> is in the upstream repository at `4bd9a6a`, 38 commits later.
+> Historical upstream test results do not validate this fork.
+> See [repository and audit evidence status](REVIEW_STATUS.md).
 
 AI video generator built for SD Worx: a Next.js app that writes a script with an LLM,
 voices it with ElevenLabs, and renders the video with Remotion.
