@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "checkedAt": "2026-11-09T00:24:14.559Z",
+  "checks": {
+    "anonymousRedirect": true,
+    "boardRendered": true,
+    "disabledCaptureRendered": true,
+    "humanReviewAndEphemeralNotices": true,
+    "existingClaimsRendered": true,
+    "briefRendered": true,
+    "otherWorkspaceDenied": true
+  },
+  "scope": "Local HTTP and server-rendered HTML only. No browser layout, hydration or live provider verification."
+}

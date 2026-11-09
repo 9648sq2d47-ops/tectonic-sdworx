@@ -27,7 +27,7 @@ weak signing secret and legacy-cookie compatibility. Local command:
 
 ```text
 npm exec vitest run src/lib/auth/session.test.ts
-9 November 2026, 01:11 UTC — exit 0; 1 file, 8 tests passed.
+9 November 2026 — exit 0; 1 file, 8 tests passed.
 ```
 
 This supports retaining the narrow session-ID correction. It does not retroactively

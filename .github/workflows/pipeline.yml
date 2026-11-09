@@ -11,8 +11,8 @@
 # refuses its GitHub Action on a repo the App already protects (HTTP 422), so there is no
 # scan job here on purpose. Make the App's check "required" in branch protection for main.
 #
-# GitHub auth to Google Cloud is keyless (Workload Identity Federation): no service-account
-# key is stored anywhere. One-time setup: scripts/gcp/setup-github-deploy.sh, then set the
+# This workflow uses Workload Identity Federation and configures no service-account key.
+# Historical setup: scripts/gcp/setup-github-deploy.sh, then set the
 # repository variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT.
 name: Pipeline
 
